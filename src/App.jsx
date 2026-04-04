@@ -35,6 +35,82 @@ export default function App() {
   const [form, setForm] = useState({ description: "", amount: "", category: CAT_ING[0], date: "" });
   const [editId, setEditId] = useState(null);
 
+  // AI Advisor
+  const [aiMessages, setAiMessages] = useState([]);
+  const [aiInput, setAiInput] = useState("");
+  const [aiLoading, setAiLoading] = useState(false);
+
+  const buildFinancialContext = () => {
+    const monthlyData = MONTHS.map((m, i) => {
+      const mt = txs.filter(t => { const d = new Date(t.date + "T12:00:00"); return d.getFullYear() === selYear && d.getMonth() === i; });
+      if (mt.length === 0) return null;
+      const iA = mt.filter(t => t.type === "ingreso" && t.currency === "ARS").reduce((s, t) => s + t.amount, 0);
+      const eA = mt.filter(t => t.type === "egreso" && t.currency === "ARS").reduce((s, t) => s + t.amount, 0);
+      const iU = mt.filter(t => t.type === "ingreso" && t.currency === "USD").reduce((s, t) => s + t.amount, 0);
+      const eU = mt.filter(t => t.type === "egreso" && t.currency === "USD").reduce((s, t) => s + t.amount, 0);
+      const cats = {};
+      mt.filter(t => t.type === "egreso").forEach(t => { cats[t.category] = (cats[t.category] || 0) + (t.currency === "USD" ? t.amount * (rates[selectedRate]?.venta || 1200) : t.amount); });
+      return { mes: FULL_MONTHS[i], ingresosARS: iA, egresosARS: eA, ingresosUSD: iU, egresosUSD: eU, balanceARS: iA - eA, balanceUSD: iU - eU, categorias: cats };
+    }).filter(Boolean);
+
+    return `DATOS FINANCIEROS DEL USUARIO:
+- Patrimonio actual en pesos: ${fmt(currentARS)}
+- Patrimonio actual en dólares: ${fmt(currentUSD, "USD")}
+- Cotización dólar ${selectedRate}: Compra $${rates[selectedRate]?.compra || "N/A"} / Venta $${rates[selectedRate]?.venta || "N/A"}
+- Cotización dólar blue: Compra $${rates.blue?.compra || "N/A"} / Venta $${rates.blue?.venta || "N/A"}
+- Cotización dólar oficial: Compra $${rates.oficial?.compra || "N/A"} / Venta $${rates.oficial?.venta || "N/A"}
+- Cotización dólar MEP: Compra $${rates.mep?.compra || "N/A"} / Venta $${rates.mep?.venta || "N/A"}
+- Año seleccionado: ${selYear}
+
+MOVIMIENTOS POR MES:
+${monthlyData.map(d => `${d.mes}: Ingresos ARS ${fmt(d.ingresosARS)} | Egresos ARS ${fmt(d.egresosARS)} | Balance ARS ${fmt(d.balanceARS)} | Ingresos USD ${fmt(d.ingresosUSD, "USD")} | Egresos USD ${fmt(d.egresosUSD, "USD")} | Balance USD ${fmt(d.balanceUSD, "USD")} | Categorías gastos: ${Object.entries(d.categorias).map(([c, v]) => `${c}: ${fmt(v)}`).join(", ") || "ninguno"}`).join("\n")}
+`;
+  };
+
+  const sendAiMessage = async (userMsg) => {
+    if (!userMsg.trim()) return;
+    const newMessages = [...aiMessages, { role: "user", content: userMsg }];
+    setAiMessages(newMessages);
+    setAiInput("");
+    setAiLoading(true);
+
+    try {
+      const systemPrompt = `Sos un asesor financiero personal argentino. Hablás en español rioplatense (vos, ché, etc). Tu usuario es alguien que está empezando a aprender sobre inversiones y finanzas.
+
+Tu rol:
+1. PANEO MENSUAL: Analizá sus movimientos, compará meses, decile si le fue bien o mal, si puede comprar dólares con el excedente.
+2. EDUCACIÓN FINANCIERA: Explicale de forma simple qué son bonos, CEDEARs, acciones, plazo fijo, FCI, ONs. Dónde se compran (brokers como IOL, Balanz, PPI, Cocos, etc). Cómo arrancar.
+3. RECOMENDACIONES: Basadas en su situación real. Arrancá conservador. Sugerí opciones concretas.
+4. Sé directo, claro y práctico. Usá emojis con moderación. No seas muy largo, andá al grano.
+5. Si te preguntan algo que no tiene que ver con finanzas, contestá amablemente pero redirigí a finanzas.
+6. Siempre tené en cuenta sus datos financieros reales para dar consejos personalizados.
+7. IMPORTANTE: No sos un bot genérico, sos SU asesor personal que conoce sus números.
+
+${buildFinancialContext()}`;
+
+      const apiMessages = newMessages.map(m => ({ role: m.role, content: m.content }));
+
+      const response = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 1000,
+          system: systemPrompt,
+          messages: apiMessages,
+        }),
+      });
+
+      const data = await response.json();
+      const aiText = data.content?.map(b => b.type === "text" ? b.text : "").join("") || "No pude procesar tu consulta. Intentá de nuevo.";
+      setAiMessages([...newMessages, { role: "assistant", content: aiText }]);
+    } catch (e) {
+      console.error("AI Error:", e);
+      setAiMessages([...newMessages, { role: "assistant", content: "Hubo un error al consultar. Intentá de nuevo en unos segundos." }]);
+    }
+    setAiLoading(false);
+  };
+
   // Real-time sync with Firestore
   useEffect(() => {
     const unsub = onSnapshot(collection(db, COLLECTION), (snapshot) => {
@@ -227,7 +303,7 @@ export default function App() {
       )}
 
       <div style={S.monthRow}>{MONTHS.map((m, i) => (<button key={m} onClick={() => setSelMonth(i)} style={{ ...S.mp, ...(i === selMonth ? S.mpA : {}) }}>{m}</button>))}</div>
-      <div style={S.nav}>{[["dashboard", "Resumen"], ["transactions", "Movimientos"], ["annual", "Anual"], ["insights", "Análisis"]].map(([k, l]) => (<button key={k} onClick={() => setView(k)} style={{ ...S.nb, ...(view === k ? S.nbA : {}) }}>{l}</button>))}</div>
+      <div style={S.nav}>{[["dashboard", "Resumen"], ["transactions", "Movimientos"], ["annual", "Anual"], ["insights", "Análisis"], ["advisor", "🤖 Asesor"]].map(([k, l]) => (<button key={k} onClick={() => setView(k)} style={{ ...S.nb, ...(view === k ? S.nbA : {}) }}>{l}</button>))}</div>
 
       {/* === DASHBOARD === */}
       {view === "dashboard" && (
@@ -362,6 +438,67 @@ export default function App() {
         </div>
       )}
 
+      {/* === AI ADVISOR === */}
+      {view === "advisor" && (
+        <div style={{ animation: "fadeIn .4s" }}>
+          <div style={S.aiHeader}>
+            <h3 style={S.secT}>🤖 Asesor Financiero</h3>
+            <p style={{ fontSize: 13, color: "#64748b", marginBottom: 16 }}>Tu asesor personal que conoce tus finanzas. Preguntale lo que quieras.</p>
+          </div>
+
+          {/* Quick action buttons */}
+          <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
+            {[
+              ["📊 Paneo del mes", `Dame un paneo general de ${FULL_MONTHS[selMonth]} ${selYear}. ¿Cómo me fue? ¿Puedo comprar dólares?`],
+              ["📈 Comparar meses", `Compará mis últimos meses y decime cómo vengo. ¿Estoy mejorando o empeorando?`],
+              ["💵 ¿Compro dólares?", `Con mi situación actual, ¿me conviene comprar dólares? ¿Cuántos podría comprar?`],
+              ["📚 Quiero aprender", `Explicame de forma simple qué opciones de inversión tengo en Argentina. Soy principiante, no sé nada de bonos ni acciones.`],
+            ].map(([label, msg]) => (
+              <button key={label} onClick={() => sendAiMessage(msg)} style={S.aiQuickBtn} disabled={aiLoading}>{label}</button>
+            ))}
+          </div>
+
+          {/* Chat messages */}
+          <div style={S.aiChat}>
+            {aiMessages.length === 0 && (
+              <div style={S.aiWelcome}>
+                <span style={{ fontSize: 40 }}>🤖</span>
+                <p style={{ fontSize: 15, color: "#94a3b8", textAlign: "center", lineHeight: 1.6 }}>¡Hola! Soy tu asesor financiero personal. Conozco todos tus movimientos y puedo ayudarte a tomar mejores decisiones con tu plata. Preguntame lo que quieras o usá los botones de arriba.</p>
+              </div>
+            )}
+            {aiMessages.map((msg, i) => (
+              <div key={i} style={{ ...S.aiMsg, ...(msg.role === "user" ? S.aiMsgUser : S.aiMsgBot) }}>
+                {msg.role === "assistant" && <span style={S.aiAvatar}>🤖</span>}
+                <div style={{ ...S.aiBubble, ...(msg.role === "user" ? S.aiBubbleUser : S.aiBubbleBot) }}>
+                  {msg.content.split("\n").map((line, j) => <p key={j} style={{ margin: line === "" ? "8px 0" : "2px 0" }}>{line}</p>)}
+                </div>
+              </div>
+            ))}
+            {aiLoading && (
+              <div style={{ ...S.aiMsg, ...S.aiMsgBot }}>
+                <span style={S.aiAvatar}>🤖</span>
+                <div style={{ ...S.aiBubble, ...S.aiBubbleBot }}>
+                  <p style={{ color: "#64748b", animation: "pulse 1.2s infinite" }}>Analizando tus finanzas...</p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Input */}
+          <div style={S.aiInputRow}>
+            <input
+              style={S.aiInput}
+              placeholder="Preguntale a tu asesor..."
+              value={aiInput}
+              onChange={e => setAiInput(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && !aiLoading && sendAiMessage(aiInput)}
+              disabled={aiLoading}
+            />
+            <button style={{ ...S.bG, opacity: aiLoading ? 0.5 : 1 }} onClick={() => sendAiMessage(aiInput)} disabled={aiLoading}>Enviar</button>
+          </div>
+        </div>
+      )}
+
       {/* Form Modal */}
       {showForm && (<div style={S.ov} onClick={() => setShowForm(false)}><div style={{ ...S.mod, animation: "popIn .3s" }} onClick={e => e.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
@@ -478,4 +615,19 @@ const S = {
   fLbl: { display: "block", fontSize: 12, fontWeight: 600, color: "#94a3b8", marginBottom: 5, textTransform: "uppercase", letterSpacing: .3 },
   fIn: { width: "100%", padding: "11px 14px", border: "1px solid #334155", borderRadius: 10, fontSize: 14, background: "#0f172a", color: "#e2e8f0" },
   canBtn: { padding: "10px 22px", border: "1px solid #334155", borderRadius: 12, background: "transparent", color: "#94a3b8", fontWeight: 500, cursor: "pointer", fontSize: 14 },
+
+  // AI Advisor
+  aiHeader: { marginBottom: 4 },
+  aiQuickBtn: { padding: "8px 16px", border: "1px solid #334155", borderRadius: 20, background: "#1e293b", color: "#cbd5e1", fontSize: 12, fontWeight: 500, cursor: "pointer", transition: "all .2s" },
+  aiChat: { minHeight: 300, maxHeight: 500, overflowY: "auto", marginBottom: 16, display: "flex", flexDirection: "column", gap: 12 },
+  aiWelcome: { display: "flex", flexDirection: "column", alignItems: "center", gap: 12, padding: "40px 20px" },
+  aiMsg: { display: "flex", gap: 10, alignItems: "flex-start" },
+  aiMsgUser: { justifyContent: "flex-end" },
+  aiMsgBot: { justifyContent: "flex-start" },
+  aiAvatar: { fontSize: 20, flexShrink: 0, marginTop: 4 },
+  aiBubble: { maxWidth: "80%", padding: "12px 16px", borderRadius: 16, fontSize: 14, lineHeight: 1.6 },
+  aiBubbleUser: { background: "#0f5132", color: "#fff", borderBottomRightRadius: 4 },
+  aiBubbleBot: { background: "#1e293b", color: "#cbd5e1", border: "1px solid #334155", borderBottomLeftRadius: 4 },
+  aiInputRow: { display: "flex", gap: 8, position: "sticky", bottom: 0, background: "#0c0f14", paddingTop: 8 },
+  aiInput: { flex: 1, padding: "12px 16px", border: "1px solid #334155", borderRadius: 14, fontSize: 14, background: "#1e293b", color: "#e2e8f0", fontFamily: "'Outfit',sans-serif" },
 };
