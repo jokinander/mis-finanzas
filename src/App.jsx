@@ -35,81 +35,8 @@ export default function App() {
   const [form, setForm] = useState({ description: "", amount: "", category: CAT_ING[0], date: "" });
   const [editId, setEditId] = useState(null);
 
-  // AI Advisor
-  const [aiMessages, setAiMessages] = useState([]);
-  const [aiInput, setAiInput] = useState("");
-  const [aiLoading, setAiLoading] = useState(false);
-
-  const buildFinancialContext = () => {
-    const monthlyData = MONTHS.map((m, i) => {
-      const mt = txs.filter(t => { const d = new Date(t.date + "T12:00:00"); return d.getFullYear() === selYear && d.getMonth() === i; });
-      if (mt.length === 0) return null;
-      const iA = mt.filter(t => t.type === "ingreso" && t.currency === "ARS").reduce((s, t) => s + t.amount, 0);
-      const eA = mt.filter(t => t.type === "egreso" && t.currency === "ARS").reduce((s, t) => s + t.amount, 0);
-      const iU = mt.filter(t => t.type === "ingreso" && t.currency === "USD").reduce((s, t) => s + t.amount, 0);
-      const eU = mt.filter(t => t.type === "egreso" && t.currency === "USD").reduce((s, t) => s + t.amount, 0);
-      const cats = {};
-      mt.filter(t => t.type === "egreso").forEach(t => { cats[t.category] = (cats[t.category] || 0) + (t.currency === "USD" ? t.amount * (rates[selectedRate]?.venta || 1200) : t.amount); });
-      return { mes: FULL_MONTHS[i], ingresosARS: iA, egresosARS: eA, ingresosUSD: iU, egresosUSD: eU, balanceARS: iA - eA, balanceUSD: iU - eU, categorias: cats };
-    }).filter(Boolean);
-
-    return `DATOS FINANCIEROS DEL USUARIO:
-- Patrimonio actual en pesos: ${fmt(currentARS)}
-- Patrimonio actual en dólares: ${fmt(currentUSD, "USD")}
-- Cotización dólar ${selectedRate}: Compra $${rates[selectedRate]?.compra || "N/A"} / Venta $${rates[selectedRate]?.venta || "N/A"}
-- Cotización dólar blue: Compra $${rates.blue?.compra || "N/A"} / Venta $${rates.blue?.venta || "N/A"}
-- Cotización dólar oficial: Compra $${rates.oficial?.compra || "N/A"} / Venta $${rates.oficial?.venta || "N/A"}
-- Cotización dólar MEP: Compra $${rates.mep?.compra || "N/A"} / Venta $${rates.mep?.venta || "N/A"}
-- Año seleccionado: ${selYear}
-
-MOVIMIENTOS POR MES:
-${monthlyData.map(d => `${d.mes}: Ingresos ARS ${fmt(d.ingresosARS)} | Egresos ARS ${fmt(d.egresosARS)} | Balance ARS ${fmt(d.balanceARS)} | Ingresos USD ${fmt(d.ingresosUSD, "USD")} | Egresos USD ${fmt(d.egresosUSD, "USD")} | Balance USD ${fmt(d.balanceUSD, "USD")} | Categorías gastos: ${Object.entries(d.categorias).map(([c, v]) => `${c}: ${fmt(v)}`).join(", ") || "ninguno"}`).join("\n")}
-`;
-  };
-
-  const sendAiMessage = async (userMsg) => {
-    if (!userMsg.trim()) return;
-    const newMessages = [...aiMessages, { role: "user", content: userMsg }];
-    setAiMessages(newMessages);
-    setAiInput("");
-    setAiLoading(true);
-
-    try {
-      const systemPrompt = `Sos un asesor financiero personal argentino. Hablás en español rioplatense (vos, ché, etc). Tu usuario es alguien que está empezando a aprender sobre inversiones y finanzas.
-
-Tu rol:
-1. PANEO MENSUAL: Analizá sus movimientos, compará meses, decile si le fue bien o mal, si puede comprar dólares con el excedente.
-2. EDUCACIÓN FINANCIERA: Explicale de forma simple qué son bonos, CEDEARs, acciones, plazo fijo, FCI, ONs. Dónde se compran (brokers como IOL, Balanz, PPI, Cocos, etc). Cómo arrancar.
-3. RECOMENDACIONES: Basadas en su situación real. Arrancá conservador. Sugerí opciones concretas.
-4. Sé directo, claro y práctico. Usá emojis con moderación. No seas muy largo, andá al grano.
-5. Si te preguntan algo que no tiene que ver con finanzas, contestá amablemente pero redirigí a finanzas.
-6. Siempre tené en cuenta sus datos financieros reales para dar consejos personalizados.
-7. IMPORTANTE: No sos un bot genérico, sos SU asesor personal que conoce sus números.
-
-${buildFinancialContext()}`;
-
-      const apiMessages = newMessages.map(m => ({ role: m.role, content: m.content }));
-
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 1000,
-          system: systemPrompt,
-          messages: apiMessages,
-        }),
-      });
-
-      const data = await response.json();
-      const aiText = data.content?.map(b => b.type === "text" ? b.text : "").join("") || "No pude procesar tu consulta. Intentá de nuevo.";
-      setAiMessages([...newMessages, { role: "assistant", content: aiText }]);
-    } catch (e) {
-      console.error("AI Error:", e);
-      setAiMessages([...newMessages, { role: "assistant", content: "Hubo un error al consultar. Intentá de nuevo en unos segundos." }]);
-    }
-    setAiLoading(false);
-  };
+  // Education section toggle
+  const [eduSection, setEduSection] = useState(null);
 
   // Real-time sync with Firestore
   useEffect(() => {
@@ -303,7 +230,7 @@ ${buildFinancialContext()}`;
       )}
 
       <div style={S.monthRow}>{MONTHS.map((m, i) => (<button key={m} onClick={() => setSelMonth(i)} style={{ ...S.mp, ...(i === selMonth ? S.mpA : {}) }}>{m}</button>))}</div>
-      <div style={S.nav}>{[["dashboard", "Resumen"], ["transactions", "Movimientos"], ["annual", "Anual"], ["insights", "Análisis"], ["advisor", "🤖 Asesor"]].map(([k, l]) => (<button key={k} onClick={() => setView(k)} style={{ ...S.nb, ...(view === k ? S.nbA : {}) }}>{l}</button>))}</div>
+      <div style={S.nav}>{[["dashboard", "Resumen"], ["transactions", "Movimientos"], ["annual", "Anual"], ["insights", "Análisis"], ["advisor", "📚 Inversiones"]].map(([k, l]) => (<button key={k} onClick={() => setView(k)} style={{ ...S.nb, ...(view === k ? S.nbA : {}) }}>{l}</button>))}</div>
 
       {/* === DASHBOARD === */}
       {view === "dashboard" && (
@@ -414,88 +341,140 @@ ${buildFinancialContext()}`;
         </div>
       )}
 
-      {/* === INSIGHTS === */}
-      {view === "insights" && (
+      {/* === ANÁLISIS === */}
+      {view === "insights" && (() => {
+        const totalEgMes = egARS + egUSD * rate;
+        const totalIngMes = ingARS + ingUSD * rate;
+        const catTotals = CAT_EG.map(c => ({ c, t: monthTxs.filter(t => t.type === "egreso" && t.category === c).reduce((s, t) => s + (t.currency === "USD" ? t.amount * rate : t.amount), 0) })).filter(x => x.t > 0).sort((a, b) => b.t - a.t);
+        const canBuyBlue = balARS > 0 && rate > 0 ? Math.floor((balARS * 0.7) / rate * 100) / 100 : 0;
+        const canBuyFull = balARS > 0 && rate > 0 ? Math.floor(balARS / rate * 100) / 100 : 0;
+
+        // Trend: last 3 months with data
+        const trend = [];
+        for (let i = 0; i < 12; i++) {
+          const mi = selMonth - i;
+          const yi = mi < 0 ? selYear - 1 : selYear;
+          const mIdx = mi < 0 ? mi + 12 : mi;
+          const mt = txs.filter(t => { const d = new Date(t.date + "T12:00:00"); return d.getFullYear() === yi && d.getMonth() === mIdx; });
+          if (mt.length > 0 || i === 0) {
+            const iA = sumBy(mt,"ingreso","ARS"), eA = sumBy(mt,"egreso","ARS"), iU = sumBy(mt,"ingreso","USD"), eU = sumBy(mt,"egreso","USD");
+            trend.push({ month: FULL_MONTHS[mIdx], ingTotal: iA + iU * rate, egTotal: eA + eU * rate, bal: (iA-eA)+(iU-eU)*rate, count: mt.length });
+          }
+          if (trend.length >= 4) break;
+        }
+
+        const avgEg = trend.length > 1 ? trend.slice(1).reduce((s,t) => s + t.egTotal, 0) / (trend.length - 1) : 0;
+
+        return (
         <div style={{ animation: "fadeIn .4s" }}>
-          <h3 style={S.secT}>Análisis — {FULL_MONTHS[selMonth]} {selYear}</h3>
-          <p style={{ fontSize: 13, color: "#64748b", marginBottom: 20 }}>Conclusiones basadas en tus movimientos · Cotización: dólar {selectedRate} ${rate.toLocaleString("es-AR")}</p>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 24 }}>
-            {getInsights().map((ins, i) => (
-              <div key={i} style={{ ...S.insC, borderLeft: `4px solid ${ins.type === "good" ? "#10b981" : ins.type === "warning" ? "#f59e0b" : ins.type === "tip" ? "#3b82f6" : "#64748b"}`, animation: `popIn .35s ease ${i * .08}s both` }}>
-                <span style={{ fontSize: 22, flexShrink: 0 }}>{ins.icon}</span><p style={{ fontSize: 14, color: "#cbd5e1", lineHeight: 1.6 }}>{ins.text}</p>
-              </div>
-            ))}
+          <h3 style={S.secT}>📊 Análisis — {FULL_MONTHS[selMonth]} {selYear}</h3>
+
+          {/* Paneo general */}
+          <div style={{ ...S.insC, borderLeft: "4px solid #a78bfa", marginBottom: 12 }}>
+            <span style={{ fontSize: 22 }}>📋</span>
+            <div style={{ fontSize: 14, color: "#cbd5e1", lineHeight: 1.7 }}>
+              <p style={{ fontWeight: 700, color: "#e2e8f0", marginBottom: 6 }}>Paneo del mes</p>
+              {monthTxs.length === 0 ? <p>No hay movimientos cargados este mes todavía.</p> : <>
+                <p>Ingresaste {fmt(totalIngMes)} y gastaste {fmt(totalEgMes)}.</p>
+                <p>Tu balance del mes es de <strong style={{ color: balTotalARS >= 0 ? "#10b981" : "#f87171" }}>{fmt(balTotalARS)}</strong>.</p>
+                {avgEg > 0 && totalEgMes > avgEg * 1.1 && <p>⚠️ Gastaste {Math.round(((totalEgMes/avgEg)-1)*100)}% más que tu promedio de meses anteriores.</p>}
+                {avgEg > 0 && totalEgMes <= avgEg && <p>✅ Tus gastos están por debajo del promedio. ¡Bien!</p>}
+              </>}
+            </div>
           </div>
+
+          {/* Compra de dólares */}
+          <div style={{ ...S.insC, borderLeft: `4px solid ${canBuyBlue >= 1 ? "#10b981" : "#f59e0b"}`, marginBottom: 12 }}>
+            <span style={{ fontSize: 22 }}>💵</span>
+            <div style={{ fontSize: 14, color: "#cbd5e1", lineHeight: 1.7 }}>
+              <p style={{ fontWeight: 700, color: "#e2e8f0", marginBottom: 6 }}>¿Puedo comprar dólares?</p>
+              {balARS <= 0 ? <p>❌ Este mes no te quedó excedente en pesos. No es buen momento para comprar.</p> : <>
+                <p>✅ Te quedaron {fmt(balARS)} de excedente en pesos.</p>
+                <p>Al dólar {selectedRate} (${rate.toLocaleString("es-AR")}), podrías comprar:</p>
+                <p>• Usando el 70% del excedente (recomendado): <strong style={{ color: "#10b981" }}>US${canBuyBlue.toFixed(2)}</strong></p>
+                <p>• Usando todo el excedente: <strong>US${canBuyFull.toFixed(2)}</strong></p>
+                {canBuyBlue >= 1 && <p style={{ color: "#10b981" }}>👍 Buen mes para dolarizar una parte.</p>}
+              </>}
+            </div>
+          </div>
+
+          {/* Mayor gasto */}
+          <div style={{ ...S.insC, borderLeft: "4px solid #f59e0b", marginBottom: 12 }}>
+            <span style={{ fontSize: 22 }}>🏷️</span>
+            <div style={{ fontSize: 14, color: "#cbd5e1", lineHeight: 1.7 }}>
+              <p style={{ fontWeight: 700, color: "#e2e8f0", marginBottom: 6 }}>¿En qué gastás más?</p>
+              {catTotals.length === 0 ? <p>No hay egresos cargados este mes.</p> :
+                catTotals.slice(0, 5).map((ct, i) => {
+                  const pct = totalEgMes > 0 ? Math.round((ct.t / totalEgMes) * 100) : 0;
+                  return <p key={ct.c}>{i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : "•"} {ct.c}: {fmt(ct.t)} ({pct}%){i === 0 && pct > 40 ? " ← es mucho, fijate si podés bajar" : ""}</p>;
+                })
+              }
+            </div>
+          </div>
+
+          {/* Tendencia de ahorro */}
+          <div style={{ ...S.insC, borderLeft: "4px solid #3b82f6", marginBottom: 12 }}>
+            <span style={{ fontSize: 22 }}>📈</span>
+            <div style={{ fontSize: 14, color: "#cbd5e1", lineHeight: 1.7 }}>
+              <p style={{ fontWeight: 700, color: "#e2e8f0", marginBottom: 6 }}>Tendencia de ahorro</p>
+              {trend.filter(t => t.count > 0).length <= 1 ? <p>Cargá más de un mes para ver la tendencia.</p> :
+                trend.filter(t => t.count > 0).map((t, i) => (
+                  <p key={t.month}>{t.month}: Balance <strong style={{ color: t.bal >= 0 ? "#10b981" : "#f87171" }}>{fmt(t.bal)}</strong> (Ing: {fmt(t.ingTotal)} · Eg: {fmt(t.egTotal)})</p>
+                ))
+              }
+              {trend.filter(t => t.count > 0).length > 1 && (() => {
+                const curr = trend[0]?.bal || 0;
+                const prev = trend[1]?.bal || 0;
+                const diff = curr - prev;
+                return diff > 0
+                  ? <p style={{ color: "#10b981", marginTop: 6 }}>📈 Mejoraste {fmt(diff)} respecto al mes anterior. ¡Seguí así!</p>
+                  : diff < 0 ? <p style={{ color: "#f87171", marginTop: 6 }}>📉 Tu balance bajó {fmt(Math.abs(diff))} respecto al mes anterior.</p>
+                  : null;
+              })()}
+            </div>
+          </div>
+
+          {/* Calculadora */}
           <div style={S.calcC}>
-            <h4 style={{ fontSize: 16, fontWeight: 700, color: "#f1f5f9", marginBottom: 4 }}>💱 Calculadora rápida</h4>
-            <p style={{ fontSize: 13, color: "#64748b", marginBottom: 16 }}>Dólar {selectedRate} — Venta: ${rate.toLocaleString("es-AR")}</p>
+            <h4 style={{ fontSize: 16, fontWeight: 700, color: "#f1f5f9", marginBottom: 4 }}>💱 Resumen de patrimonio</h4>
+            <p style={{ fontSize: 13, color: "#64748b", marginBottom: 16 }}>Dólar {selectedRate} — ${rate.toLocaleString("es-AR")}</p>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              {[["Saldo ARS actual", fmt(currentARS), "#e2e8f0"], ["Saldo USD actual", fmt(currentUSD, "USD"), "#3b82f6"], ["Balance del mes", fmt(balTotalARS), balTotalARS >= 0 ? "#10b981" : "#f87171"], ["Patrimonio en ARS", fmt(currentARS + currentUSD * rate), "#f1f5f9"]].map(([l, v, c]) => (
+              {[["Saldo ARS", fmt(currentARS), "#e2e8f0"], ["Saldo USD", fmt(currentUSD, "USD"), "#3b82f6"], ["Balance del mes", fmt(balTotalARS), balTotalARS >= 0 ? "#10b981" : "#f87171"], ["Patrimonio total ARS", fmt(currentARS + currentUSD * rate), "#f1f5f9"]].map(([l, v, c]) => (
                 <div key={l} style={S.calcI}><span style={{ fontSize: 11, color: "#64748b", textTransform: "uppercase", letterSpacing: .3 }}>{l}</span><span style={{ fontSize: 18, fontWeight: 700, color: c, fontFamily: "'Fraunces',serif" }}>{v}</span></div>
               ))}
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
-      {/* === AI ADVISOR === */}
+      {/* === EDUCACIÓN FINANCIERA === */}
       {view === "advisor" && (
         <div style={{ animation: "fadeIn .4s" }}>
-          <div style={S.aiHeader}>
-            <h3 style={S.secT}>🤖 Asesor Financiero</h3>
-            <p style={{ fontSize: 13, color: "#64748b", marginBottom: 16 }}>Tu asesor personal que conoce tus finanzas. Preguntale lo que quieras.</p>
-          </div>
+          <h3 style={S.secT}>📚 Inversiones</h3>
+          <p style={{ fontSize: 13, color: "#64748b", marginBottom: 20 }}>Guía para empezar a invertir en Argentina. Tocá cada sección para aprender más.</p>
 
-          {/* Quick action buttons */}
-          <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
-            {[
-              ["📊 Paneo del mes", `Dame un paneo general de ${FULL_MONTHS[selMonth]} ${selYear}. ¿Cómo me fue? ¿Puedo comprar dólares?`],
-              ["📈 Comparar meses", `Compará mis últimos meses y decime cómo vengo. ¿Estoy mejorando o empeorando?`],
-              ["💵 ¿Compro dólares?", `Con mi situación actual, ¿me conviene comprar dólares? ¿Cuántos podría comprar?`],
-              ["📚 Quiero aprender", `Explicame de forma simple qué opciones de inversión tengo en Argentina. Soy principiante, no sé nada de bonos ni acciones.`],
-            ].map(([label, msg]) => (
-              <button key={label} onClick={() => sendAiMessage(msg)} style={S.aiQuickBtn} disabled={aiLoading}>{label}</button>
-            ))}
-          </div>
-
-          {/* Chat messages */}
-          <div style={S.aiChat}>
-            {aiMessages.length === 0 && (
-              <div style={S.aiWelcome}>
-                <span style={{ fontSize: 40 }}>🤖</span>
-                <p style={{ fontSize: 15, color: "#94a3b8", textAlign: "center", lineHeight: 1.6 }}>¡Hola! Soy tu asesor financiero personal. Conozco todos tus movimientos y puedo ayudarte a tomar mejores decisiones con tu plata. Preguntame lo que quieras o usá los botones de arriba.</p>
-              </div>
-            )}
-            {aiMessages.map((msg, i) => (
-              <div key={i} style={{ ...S.aiMsg, ...(msg.role === "user" ? S.aiMsgUser : S.aiMsgBot) }}>
-                {msg.role === "assistant" && <span style={S.aiAvatar}>🤖</span>}
-                <div style={{ ...S.aiBubble, ...(msg.role === "user" ? S.aiBubbleUser : S.aiBubbleBot) }}>
-                  {msg.content.split("\n").map((line, j) => <p key={j} style={{ margin: line === "" ? "8px 0" : "2px 0" }}>{line}</p>)}
+          {[
+            { id: "broker", icon: "🏦", title: "¿Dónde invierto? (Brokers)", content: `Para comprar bonos, acciones y CEDEARs necesitás abrirte una cuenta en un broker (Agente de Liquidación y Compensación). Es como una cuenta bancaria pero para invertir.\n\n📌 Brokers más usados en Argentina:\n• IOL (InvertirOnline) — el más popular, fácil de usar\n• Balanz — buena app, tiene FCI interesantes\n• PPI (Portfolio Personal) — muy completo\n• Cocos Capital — moderno, buenas comisiones\n• Bull Market Brokers — buena plataforma\n\n🔑 Para abrir cuenta necesitás: DNI, CBU, y completar un formulario online. Es gratis y tardás 24-48hs.` },
+            { id: "bonos", icon: "📜", title: "¿Qué son los Bonos?", content: `Un bono es como prestarle plata al gobierno o a una empresa. A cambio, te pagan intereses periódicos y al final te devuelven el capital.\n\n✅ Ventajas: renta fija, sabés cuánto vas a ganar\n⚠️ Riesgos: si el emisor no paga (default), perdés\n\n📌 Tipos en Argentina:\n• Bonos del Tesoro (AL30, GD30) — en dólares, los más operados\n• Letras del Tesoro (LECAPs) — en pesos, corto plazo\n• Bonos CER — ajustan por inflación\n• ONs (Obligaciones Negociables) — bonos de empresas privadas, suelen ser más seguros\n\n💡 Para empezar: las LECAPs o las ONs de empresas sólidas son buena opción conservadora.` },
+            { id: "cedears", icon: "🌍", title: "¿Qué son los CEDEARs?", content: `Los CEDEARs son certificados que representan acciones de empresas que cotizan afuera (Apple, Google, Amazon, Coca-Cola, etc), pero las comprás en pesos desde tu broker argentino.\n\n✅ Ventajas:\n• Invertís en empresas globales sin abrir cuenta afuera\n• Cotizan en pesos pero siguen el precio en dólares\n• Son una forma de dolarizarte indirectamente\n\n⚠️ Riesgos: el precio sube y baja con la empresa y el tipo de cambio\n\n📌 CEDEARs populares para arrancar:\n• AAPL (Apple) — empresa sólida\n• KO (Coca-Cola) — dividendos estables\n• MELI (MercadoLibre) — empresa argentina que cotiza en NASDAQ\n• SPY — sigue al S&P 500 (diversificado)\n\n💡 Consejo: arrancá con SPY que es diversificado, o con empresas que conozcas.` },
+            { id: "acciones", icon: "📈", title: "¿Qué son las Acciones?", content: `Comprar una acción es ser dueño de un pedacito de una empresa. Si la empresa crece, tu acción vale más.\n\n📌 Acciones argentinas (Merval):\n• YPF — energía, la más operada\n• Galicia (GGAL) — banco\n• Pampa Energía (PAMP) — energía\n• Ternium (TXAR) — acero\n• Vista Energy (VIST) — petróleo\n\n✅ Ventajas: potencial de ganancia alta\n⚠️ Riesgos: pueden bajar mucho, son volátiles\n\n💡 Para un perfil moderado: no pongas más del 10-20% de tu plata en acciones individuales. Mejor diversificar con CEDEARs o FCI.` },
+            { id: "fci", icon: "🧺", title: "¿Qué son los FCI (Fondos)?", content: `Un FCI (Fondo Común de Inversión) es como una canasta donde muchos inversores ponen plata y un profesional la administra. Ideal para arrancar.\n\n📌 Tipos:\n• Money Market (ej: Balanz Ahorro) — como un plazo fijo pero podés sacar la plata cuando quieras\n• Renta Fija — invierten en bonos, más estable\n• Renta Variable — invierten en acciones, más riesgo y ganancia\n• Renta Mixta — un poco de todo\n\n✅ Ventajas: diversificación automática, mínimos bajos\n💡 Para empezar: un FCI Money Market para la plata que no usás día a día, rinde más que tenerla en la cuenta.` },
+            { id: "pasos", icon: "🚀", title: "¿Cómo arranco? Paso a paso", content: `1️⃣ Abrí cuenta en un broker (IOL, Balanz, Cocos — elegí el que más te guste)\n2️⃣ Transferí pesos desde tu banco al broker\n3️⃣ Empezá con un FCI Money Market con la plata que no usás\n4️⃣ Cuando te sientas cómodo, probá con una LECAP o una ON\n5️⃣ Si querés dolarizarte: comprá dólar MEP desde el broker (es legal y más barato que el blue)\n6️⃣ Para diversificar: metele a algún CEDEAR como SPY\n\n⏰ Todo esto lo podés hacer desde el celular\n💡 Regla de oro: nunca inviertas plata que vayas a necesitar en los próximos 3-6 meses` },
+          ].map(section => (
+            <div key={section.id} style={{ marginBottom: 10 }}>
+              <button onClick={() => setEduSection(eduSection === section.id ? null : section.id)} style={{ ...S.eduBtn, background: eduSection === section.id ? "#1e3a5f" : "#1e293b", borderColor: eduSection === section.id ? "#3b82f6" : "#334155" }}>
+                <span style={{ fontSize: 20 }}>{section.icon}</span>
+                <span style={{ flex: 1, textAlign: "left", fontWeight: 600, color: "#e2e8f0" }}>{section.title}</span>
+                <span style={{ color: "#64748b", fontSize: 18, transition: "transform .2s", transform: eduSection === section.id ? "rotate(180deg)" : "rotate(0)" }}>▾</span>
+              </button>
+              {eduSection === section.id && (
+                <div style={S.eduContent}>
+                  {section.content.split("\n").map((line, j) => <p key={j} style={{ margin: line === "" ? "8px 0" : "3px 0", lineHeight: 1.7 }}>{line}</p>)}
                 </div>
-              </div>
-            ))}
-            {aiLoading && (
-              <div style={{ ...S.aiMsg, ...S.aiMsgBot }}>
-                <span style={S.aiAvatar}>🤖</span>
-                <div style={{ ...S.aiBubble, ...S.aiBubbleBot }}>
-                  <p style={{ color: "#64748b", animation: "pulse 1.2s infinite" }}>Analizando tus finanzas...</p>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Input */}
-          <div style={S.aiInputRow}>
-            <input
-              style={S.aiInput}
-              placeholder="Preguntale a tu asesor..."
-              value={aiInput}
-              onChange={e => setAiInput(e.target.value)}
-              onKeyDown={e => e.key === "Enter" && !aiLoading && sendAiMessage(aiInput)}
-              disabled={aiLoading}
-            />
-            <button style={{ ...S.bG, opacity: aiLoading ? 0.5 : 1 }} onClick={() => sendAiMessage(aiInput)} disabled={aiLoading}>Enviar</button>
-          </div>
+              )}
+            </div>
+          ))}
         </div>
       )}
 
@@ -616,18 +595,7 @@ const S = {
   fIn: { width: "100%", padding: "11px 14px", border: "1px solid #334155", borderRadius: 10, fontSize: 14, background: "#0f172a", color: "#e2e8f0" },
   canBtn: { padding: "10px 22px", border: "1px solid #334155", borderRadius: 12, background: "transparent", color: "#94a3b8", fontWeight: 500, cursor: "pointer", fontSize: 14 },
 
-  // AI Advisor
-  aiHeader: { marginBottom: 4 },
-  aiQuickBtn: { padding: "8px 16px", border: "1px solid #334155", borderRadius: 20, background: "#1e293b", color: "#cbd5e1", fontSize: 12, fontWeight: 500, cursor: "pointer", transition: "all .2s" },
-  aiChat: { minHeight: 300, maxHeight: 500, overflowY: "auto", marginBottom: 16, display: "flex", flexDirection: "column", gap: 12 },
-  aiWelcome: { display: "flex", flexDirection: "column", alignItems: "center", gap: 12, padding: "40px 20px" },
-  aiMsg: { display: "flex", gap: 10, alignItems: "flex-start" },
-  aiMsgUser: { justifyContent: "flex-end" },
-  aiMsgBot: { justifyContent: "flex-start" },
-  aiAvatar: { fontSize: 20, flexShrink: 0, marginTop: 4 },
-  aiBubble: { maxWidth: "80%", padding: "12px 16px", borderRadius: 16, fontSize: 14, lineHeight: 1.6 },
-  aiBubbleUser: { background: "#0f5132", color: "#fff", borderBottomRightRadius: 4 },
-  aiBubbleBot: { background: "#1e293b", color: "#cbd5e1", border: "1px solid #334155", borderBottomLeftRadius: 4 },
-  aiInputRow: { display: "flex", gap: 8, position: "sticky", bottom: 0, background: "#0c0f14", paddingTop: 8 },
-  aiInput: { flex: 1, padding: "12px 16px", border: "1px solid #334155", borderRadius: 14, fontSize: 14, background: "#1e293b", color: "#e2e8f0", fontFamily: "'Outfit',sans-serif" },
+  // Education
+  eduBtn: { display: "flex", alignItems: "center", gap: 12, width: "100%", padding: "16px 18px", border: "1px solid #334155", borderRadius: 14, cursor: "pointer", fontSize: 14, transition: "all .2s" },
+  eduContent: { padding: "16px 20px", background: "#0f172a", borderRadius: "0 0 14px 14px", border: "1px solid #334155", borderTop: "none", fontSize: 14, color: "#cbd5e1", marginTop: -4 },
 };
