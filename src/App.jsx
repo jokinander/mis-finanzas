@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
+import { db } from "./firebase";
+import { collection, doc, setDoc, deleteDoc, onSnapshot } from "firebase/firestore";
 
 const MONTHS = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
 const FULL_MONTHS = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
@@ -18,21 +20,12 @@ const fmt = (n, cur = "ARS") => {
 const now = new Date();
 const CY = now.getFullYear();
 const CM = now.getMonth();
-const STORAGE_KEY = "finanzas-v3";
 
-function useLocalStorage(key, initial) {
-  const [val, setVal] = useState(() => {
-    try { const s = localStorage.getItem(key); return s ? JSON.parse(s) : initial; } catch { return initial; }
-  });
-  const set = useCallback((v) => {
-    setVal(v);
-    try { localStorage.setItem(key, JSON.stringify(v)); } catch {}
-  }, [key]);
-  return [val, set];
-}
+const COLLECTION = "finanzas";
 
 export default function App() {
-  const [data, setData] = useLocalStorage(STORAGE_KEY, { transactions: [] });
+  const [txs, setTxs] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [selYear, setSelYear] = useState(CY);
   const [selMonth, setSelMonth] = useState(CM);
   const [view, setView] = useState("dashboard");
@@ -41,6 +34,16 @@ export default function App() {
   const [formCur, setFormCur] = useState("ARS");
   const [form, setForm] = useState({ description: "", amount: "", category: CAT_ING[0], date: "" });
   const [editId, setEditId] = useState(null);
+
+  // Real-time sync with Firestore
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, COLLECTION), (snapshot) => {
+      const items = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      setTxs(items);
+      setLoading(false);
+    });
+    return () => unsub();
+  }, []);
 
   // Dollar rates
   const [rates, setRates] = useState({ blue: null, oficial: null, mep: null, loading: true, error: false, lastUpdate: null });
@@ -77,8 +80,6 @@ export default function App() {
   }, [fetchRates]);
 
   const rate = rates[selectedRate]?.venta || 1200;
-
-  const txs = data.transactions;
 
   // Dynamic balances
   const totalIngARS = txs.filter(t => t.type === "ingreso" && t.currency === "ARS").reduce((s, t) => s + t.amount, 0);
@@ -166,13 +167,18 @@ export default function App() {
     setShowForm(true);
   };
   const openEdit = (tx) => { setFormType(tx.type); setFormCur(tx.currency); setEditId(tx.id); setForm({ description: tx.description, amount: String(tx.amount), category: tx.category, date: tx.date }); setShowForm(true); };
-  const handleSave = () => {
+  const handleSave = async () => {
     const amt = parseFloat(form.amount);
     if (!form.description || isNaN(amt) || amt <= 0 || !form.date) return;
-    const newTxs = editId ? txs.map(t => t.id === editId ? { ...t, ...form, amount: amt, type: formType, currency: formCur } : t) : [...txs, { id: Date.now().toString(), type: formType, currency: formCur, ...form, amount: amt }];
-    setData({ ...data, transactions: newTxs }); setShowForm(false);
+    const id = editId || Date.now().toString();
+    await setDoc(doc(db, COLLECTION, id), { type: formType, currency: formCur, description: form.description, amount: amt, category: form.category, date: form.date });
+    setShowForm(false);
   };
-  const handleDelete = (id) => setData({ ...data, transactions: txs.filter(t => t.id !== id) });
+  const handleDelete = async (id) => { await deleteDoc(doc(db, COLLECTION, id)); };
+
+  const years = [...new Set([...txs.map(t => new Date(t.date + "T12:00:00").getFullYear()), CY])].sort();
+
+  if (loading) return <div style={{ display:"flex",flexDirection:"column",gap:12,justifyContent:"center",alignItems:"center",height:"100vh",color:"#64748b",fontSize:15,fontFamily:"'Outfit',sans-serif",background:"#0c0f14" }}><div style={{ width:24,height:24,borderRadius:"50%",background:"#0f5132",animation:"pulse 1.2s infinite" }}/><span>Cargando...</span></div>;
 
   const years = [...new Set([...txs.map(t => new Date(t.date + "T12:00:00").getFullYear()), CY])].sort();
 
