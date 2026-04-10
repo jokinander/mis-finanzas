@@ -5,7 +5,7 @@ import { collection, doc, setDoc, deleteDoc, onSnapshot } from "firebase/firesto
 const MONTHS = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
 const FULL_MONTHS = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
 const CAT_ING = ["Sueldo","Freelance","Inversiones","Venta","Regalo","Otro"];
-const CAT_EG = ["Alquiler","Servicios","Comida Agile","Comida Casa","Comida Oceo","Joda","Puchos","Transporte","Salud","Educación","Entretenimiento","Ropa","Impuestos","Otro"];
+const CAT_EG = ["Alquiler","Servicios","Comida Agile","Comida Casa","Comida Ocio","Joda","Puchos","Transporte","Salud","Educación","Entretenimiento","Ropa","Impuestos","Otro"];
 
 const INITIAL_ARS = 12401513.35;
 const INITIAL_USD = 4864;
