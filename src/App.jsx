@@ -34,6 +34,7 @@ export default function App() {
   const [formCur, setFormCur] = useState("ARS");
   const [form, setForm] = useState({ description: "", amount: "", category: CAT_ING[0], date: "" });
   const [editId, setEditId] = useState(null);
+  const [filterCat, setFilterCat] = useState("Todas");
 
   // Education section toggle
   const [eduSection, setEduSection] = useState(null);
@@ -98,6 +99,7 @@ export default function App() {
     const d = new Date(t.date + "T12:00:00");
     return d.getFullYear() === selYear && d.getMonth() === selMonth;
   });
+  const filteredTxs = filterCat === "Todas" ? monthTxs : monthTxs.filter(t => t.category === filterCat);
 
   const ingARS = sumBy(monthTxs, "ingreso", "ARS"), egARS = sumBy(monthTxs, "egreso", "ARS");
   const ingUSD = sumBy(monthTxs, "ingreso", "USD"), egUSD = sumBy(monthTxs, "egreso", "USD");
@@ -166,7 +168,7 @@ export default function App() {
   // Form
   const openForm = (type, cur = "ARS") => {
     setFormType(type); setFormCur(cur); setEditId(null);
-    setForm({ description: "", amount: "", category: type === "ingreso" ? CAT_ING[0] : CAT_EG[0], date: new Date(selYear, selMonth, 15).toISOString().split("T")[0] });
+    setForm({ description: "", amount: "", category: type === "ingreso" ? CAT_ING[0] : CAT_EG[0], date: new Date().toISOString().split("T")[0] });
     setShowForm(true);
   };
   const openEdit = (tx) => { setFormType(tx.type); setFormCur(tx.currency); setEditId(tx.id); setForm({ description: tx.description, amount: String(tx.amount), category: tx.category, date: tx.date }); setShowForm(true); };
@@ -249,14 +251,21 @@ export default function App() {
           </div>
 
           <div style={S.cards3}>
-            {[["Balance " + MONTHS[selMonth], balTotalARS, balTotalARS >= 0 ? "#0f5132" : "#b91c1c", "0s"], ["Ingresos", ingARS + ingUSD * rate, "#047857", "0.07s"], ["Egresos", egARS + egUSD * rate, "#b91c1c", "0.14s"]].map(([l, v, c, d], idx) => (
-              <div key={l} style={{ ...S.mCard, borderLeft: `4px solid ${c}`, animation: `popIn .35s ease ${d} both` }}>
-                <span style={S.mLbl}>{l}</span><span style={{ ...S.mVal, color: c }}>{fmt(v)}</span>
-                {idx === 0 && <div style={S.mSub}><span style={{ color: "#10b981" }}>{fmt(balARS)} ARS</span>{balUSD !== 0 && <span style={{ color: "#3b82f6" }}>{fmt(balUSD, "USD")}</span>}</div>}
-                {idx === 1 && <div style={S.mSub}><span>{fmt(ingARS)}</span>{ingUSD > 0 && <span>{fmt(ingUSD, "USD")}</span>}</div>}
-                {idx === 2 && <div style={S.mSub}><span>{fmt(egARS)}</span>{egUSD > 0 && <span>{fmt(egUSD, "USD")}</span>}</div>}
-              </div>
-            ))}
+            <div style={{ ...S.mCard, borderLeft: `4px solid ${balARS >= 0 ? "#0f5132" : "#b91c1c"}`, animation: "popIn .35s ease 0s both" }}>
+              <span style={S.mLbl}>Balance ARS — {MONTHS[selMonth]}</span>
+              <span style={{ ...S.mVal, color: balARS >= 0 ? "#10b981" : "#f87171" }}>{fmt(balARS)}</span>
+              <div style={S.mSub}><span style={{ color: "#10b981" }}>↑ {fmt(ingARS)}</span><span style={{ color: "#f87171" }}>↓ {fmt(egARS)}</span></div>
+            </div>
+            <div style={{ ...S.mCard, borderLeft: `4px solid ${balUSD >= 0 ? "#1d4ed8" : "#b91c1c"}`, animation: "popIn .35s ease 0.07s both" }}>
+              <span style={S.mLbl}>Balance USD — {MONTHS[selMonth]}</span>
+              <span style={{ ...S.mVal, color: balUSD >= 0 ? "#60a5fa" : "#f87171" }}>{fmt(balUSD, "USD")}</span>
+              <div style={S.mSub}><span style={{ color: "#60a5fa" }}>↑ {fmt(ingUSD, "USD")}</span><span style={{ color: "#f87171" }}>↓ {fmt(egUSD, "USD")}</span></div>
+            </div>
+            <div style={{ ...S.mCard, borderLeft: "4px solid #b91c1c", animation: "popIn .35s ease 0.14s both" }}>
+              <span style={S.mLbl}>Egresos ARS — {MONTHS[selMonth]}</span>
+              <span style={{ ...S.mVal, color: "#f87171" }}>{fmt(egARS)}</span>
+              <div style={S.mSub}><span style={{ color: "#94a3b8" }}>{monthTxs.filter(t => t.type === "egreso" && t.currency === "ARS").length} movimientos</span></div>
+            </div>
           </div>
 
           <div style={S.qRow}>
@@ -298,8 +307,16 @@ export default function App() {
             <button style={S.bR} onClick={() => openForm("egreso", "ARS")}>+ Egreso $</button>
             <button style={S.bRo} onClick={() => openForm("egreso", "USD")}>+ Egreso US$</button>
           </div>
-          {monthTxs.length === 0 ? <p style={S.emp}>Sin movimientos en {FULL_MONTHS[selMonth]}</p> :
-            monthTxs.sort((a, b) => b.date.localeCompare(a.date)).map((tx, i) => (
+          <div style={{ marginBottom: 14, display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 12, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: .3 }}>Filtrar por categoría:</span>
+            <select style={{ ...S.fIn, width: "auto", padding: "8px 12px" }} value={filterCat} onChange={e => setFilterCat(e.target.value)}>
+              <option>Todas</option>
+              {CAT_ING.map(c => <option key={c}>{c}</option>)}
+              {CAT_EG.map(c => <option key={c}>{c}</option>)}
+            </select>
+          </div>
+          {filteredTxs.length === 0 ? <p style={S.emp}>{filterCat === "Todas" ? `Sin movimientos en ${FULL_MONTHS[selMonth]}` : `Sin movimientos de "${filterCat}" en ${FULL_MONTHS[selMonth]}`}</p> :
+            filteredTxs.sort((a, b) => b.date.localeCompare(a.date)).map((tx, i) => (
               <div key={tx.id} style={{ ...S.txC, animation: `slideUp .25s ease ${i * .03}s both` }}>
                 <div style={S.tL}><div style={{ ...S.dot, background: tx.type === "ingreso" ? "#0f5132" : "#b91c1c" }} /><div><div style={S.tD}>{tx.description}</div><div style={S.tM}>{tx.category} · {tx.date} · {tx.currency}</div></div></div>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -490,10 +507,7 @@ export default function App() {
         </div>
         <div style={{ marginBottom: 14 }}><label style={S.fLbl}>Descripción</label><input style={S.fIn} placeholder="Ej: Sueldo mensual" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} /></div>
         <div style={{ marginBottom: 14 }}><label style={S.fLbl}>Monto ({formCur === "USD" ? "US$" : "$"})</label><input style={S.fIn} type="number" min="0" step="0.01" placeholder="0.00" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} /></div>
-        <div style={{ display: "flex", gap: 10 }}>
-          <div style={{ flex: 1, marginBottom: 14 }}><label style={S.fLbl}>Categoría</label><select style={S.fIn} value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}>{(formType === "ingreso" ? CAT_ING : CAT_EG).map(c => <option key={c}>{c}</option>)}</select></div>
-          <div style={{ flex: 1, marginBottom: 14 }}><label style={S.fLbl}>Fecha</label><input style={S.fIn} type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} /></div>
-        </div>
+        <div style={{ marginBottom: 14 }}><label style={S.fLbl}>Categoría</label><select style={S.fIn} value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}>{(formType === "ingreso" ? CAT_ING : CAT_EG).map(c => <option key={c}>{c}</option>)}</select></div>
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8 }}>
           <button style={S.canBtn} onClick={() => setShowForm(false)}>Cancelar</button>
           <button style={formType === "ingreso" ? S.bG : S.bR} onClick={handleSave}>{editId ? "Guardar" : "Agregar"}</button>
