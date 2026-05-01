@@ -5,7 +5,7 @@ import { collection, doc, setDoc, deleteDoc, onSnapshot } from "firebase/firesto
 const MONTHS = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
 const FULL_MONTHS = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
 const CAT_ING = ["Sueldo","Inversiones","Regalo"];
-const CAT_EG = ["Comida Agile","Comida Banda","Supermercado","Joda","Puchos","Ropa","Alquiler","Servicios/Impuestos","Otro"];
+const CAT_EG = ["Comida Agile","Comida Banda","Supermercado","Joda","Puchos","Ropa","Alquiler","Servicios/Impuestos","Inversiones","Compra de Dólares","Otro"];
 
 const INITIAL_ARS = 12401513.35;
 const INITIAL_USD = 4864;
@@ -794,9 +794,7 @@ export default function App() {
         <div style={{ marginBottom: 14 }}><label style={S.fLbl}>Monto ({formCur === "USD" ? "US$" : "$"})</label><input style={S.fIn} type="number" min="0" step="0.01" placeholder="0.00" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} /></div>
         <div style={{ display: "flex", gap: 10 }}>
           <div style={{ flex: 1, marginBottom: 14 }}><label style={S.fLbl}>Categoría</label><select style={S.fIn} value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}>{(formType === "ingreso" ? CAT_ING : CAT_EG).map(c => <option key={c}>{c}</option>)}</select></div>
-          {formType === "ingreso" && (
-            <div style={{ flex: 1, marginBottom: 14 }}><label style={S.fLbl}>Tipo</label><select style={S.fIn} value={form.tipoIngreso} onChange={e => setForm({ ...form, tipoIngreso: e.target.value })}><option value="Fijo">Fijo</option><option value="Variable">Variable</option></select></div>
-          )}
+          <div style={{ flex: 1, marginBottom: 14 }}><label style={S.fLbl}>Tipo</label><select style={S.fIn} value={form.tipoIngreso} onChange={e => setForm({ ...form, tipoIngreso: e.target.value })}><option value="Fijo">Fijo</option><option value="Variable">Variable</option></select></div>
         </div>
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8 }}>
           <button style={S.canBtn} onClick={() => setShowForm(false)}>Cancelar</button>
