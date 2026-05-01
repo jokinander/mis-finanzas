@@ -4,8 +4,8 @@ import { collection, doc, setDoc, deleteDoc, onSnapshot } from "firebase/firesto
 
 const MONTHS = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
 const FULL_MONTHS = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
-const CAT_ING = ["Sueldo","Freelance","Inversiones","Venta","Regalo","Otro"];
-const CAT_EG = ["Alquiler","Servicios","Comida Agile","Comida Casa","Comida Ocio","Joda","Puchos","Transporte","Salud","Educación","Entretenimiento","Ropa","Impuestos","Otro"];
+const CAT_ING = ["Sueldo","Inversiones","Regalo"];
+const CAT_EG = ["Comida Agile","Comida Banda","Supermercado","Joda","Puchos","Ropa","Alquiler","Servicios/Impuestos","Otro"];
 
 const INITIAL_ARS = 12401513.35;
 const INITIAL_USD = 4864;
@@ -40,6 +40,34 @@ export default function App() {
 
   // Education section toggle
   const [eduSection, setEduSection] = useState(null);
+
+  // Datos económicos
+  const [ecoData, setEcoData] = useState({ inflacion: [], ipc: [], riesgoPais: null, loading: true, error: false, lastUpdate: null });
+
+  const fetchEcoData = useCallback(async () => {
+    setEcoData(d => ({ ...d, loading: true, error: false }));
+    try {
+      const [infRes, ipcRes, rpRes] = await Promise.allSettled([
+        fetch("https://argentinadatos.com/api/v1/finanzas/indices/inflacion"),
+        fetch("https://argentinadatos.com/api/v1/finanzas/indices/inflacionInteranual"),
+        fetch("https://argentinadatos.com/api/v1/finanzas/indices/riesgo-pais"),
+      ]);
+      const inf = infRes.status === "fulfilled" ? await infRes.value.json() : [];
+      const ipc = ipcRes.status === "fulfilled" ? await ipcRes.value.json() : [];
+      const rp = rpRes.status === "fulfilled" ? await rpRes.value.json() : [];
+      setEcoData({
+        inflacion: Array.isArray(inf) ? inf.slice(-12).reverse() : [],
+        ipc: Array.isArray(ipc) ? ipc.slice(-1)[0] : null,
+        riesgoPais: Array.isArray(rp) ? rp.slice(-1)[0] : null,
+        loading: false, error: false,
+        lastUpdate: new Date().toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" }),
+      });
+    } catch(e) {
+      setEcoData(d => ({ ...d, loading: false, error: true }));
+    }
+  }, []);
+
+  useEffect(() => { fetchEcoData(); }, [fetchEcoData]);
 
   // Real-time sync with Firestore
   useEffect(() => {
@@ -237,7 +265,7 @@ export default function App() {
       )}
 
       <div style={S.monthRow}>{MONTHS.map((m, i) => (<button key={m} onClick={() => setSelMonth(i)} style={{ ...S.mp, ...(i === selMonth ? S.mpA : {}) }}>{m}</button>))}</div>
-      <div style={S.nav}>{[["dashboard", "Resumen"], ["transactions", "Movimientos"], ["annual", "Anual"], ["insights", "Análisis"], ["advisor", "📚 Inversiones"]].map(([k, l]) => (<button key={k} onClick={() => setView(k)} style={{ ...S.nb, ...(view === k ? S.nbA : {}) }}>{l}</button>))}</div>
+      <div style={S.nav}>{[["dashboard", "Resumen"], ["transactions", "Movimientos"], ["annual", "Anual"], ["insights", "Análisis"], ["advisor", "📊 Economía"]].map(([k, l]) => (<button key={k} onClick={() => setView(k)} style={{ ...S.nb, ...(view === k ? S.nbA : {}) }}>{l}</button>))}</div>
 
       {/* === DASHBOARD === */}
       {view === "dashboard" && (
@@ -504,33 +532,106 @@ export default function App() {
         );
       })()}
 
-      {/* === EDUCACIÓN FINANCIERA === */}
+      {/* === ECONOMÍA === */}
       {view === "advisor" && (
         <div style={{ animation: "fadeIn .4s" }}>
-          <h3 style={S.secT}>📚 Inversiones</h3>
-          <p style={{ fontSize: 13, color: "#64748b", marginBottom: 20 }}>Guía para empezar a invertir en Argentina. Tocá cada sección para aprender más.</p>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+            <h3 style={S.secT}>📊 Economía Argentina</h3>
+            <button style={S.refreshBtn} onClick={fetchEcoData} title="Actualizar">↻</button>
+          </div>
+          <p style={{ fontSize: 13, color: "#64748b", marginBottom: 20 }}>
+            {ecoData.loading ? "Cargando datos..." : ecoData.error ? "Error al cargar datos" : `Actualizado ${ecoData.lastUpdate}`}
+          </p>
 
-          {[
-            { id: "broker", icon: "🏦", title: "¿Dónde invierto? (Brokers)", content: `Para comprar bonos, acciones y CEDEARs necesitás abrirte una cuenta en un broker (Agente de Liquidación y Compensación). Es como una cuenta bancaria pero para invertir.\n\n📌 Brokers más usados en Argentina:\n• IOL (InvertirOnline) — el más popular, fácil de usar\n• Balanz — buena app, tiene FCI interesantes\n• PPI (Portfolio Personal) — muy completo\n• Cocos Capital — moderno, buenas comisiones\n• Bull Market Brokers — buena plataforma\n\n🔑 Para abrir cuenta necesitás: DNI, CBU, y completar un formulario online. Es gratis y tardás 24-48hs.` },
-            { id: "bonos", icon: "📜", title: "¿Qué son los Bonos?", content: `Un bono es como prestarle plata al gobierno o a una empresa. A cambio, te pagan intereses periódicos y al final te devuelven el capital.\n\n✅ Ventajas: renta fija, sabés cuánto vas a ganar\n⚠️ Riesgos: si el emisor no paga (default), perdés\n\n📌 Tipos en Argentina:\n• Bonos del Tesoro (AL30, GD30) — en dólares, los más operados\n• Letras del Tesoro (LECAPs) — en pesos, corto plazo\n• Bonos CER — ajustan por inflación\n• ONs (Obligaciones Negociables) — bonos de empresas privadas, suelen ser más seguros\n\n💡 Para empezar: las LECAPs o las ONs de empresas sólidas son buena opción conservadora.` },
-            { id: "cedears", icon: "🌍", title: "¿Qué son los CEDEARs?", content: `Los CEDEARs son certificados que representan acciones de empresas que cotizan afuera (Apple, Google, Amazon, Coca-Cola, etc), pero las comprás en pesos desde tu broker argentino.\n\n✅ Ventajas:\n• Invertís en empresas globales sin abrir cuenta afuera\n• Cotizan en pesos pero siguen el precio en dólares\n• Son una forma de dolarizarte indirectamente\n\n⚠️ Riesgos: el precio sube y baja con la empresa y el tipo de cambio\n\n📌 CEDEARs populares para arrancar:\n• AAPL (Apple) — empresa sólida\n• KO (Coca-Cola) — dividendos estables\n• MELI (MercadoLibre) — empresa argentina que cotiza en NASDAQ\n• SPY — sigue al S&P 500 (diversificado)\n\n💡 Consejo: arrancá con SPY que es diversificado, o con empresas que conozcas.` },
-            { id: "acciones", icon: "📈", title: "¿Qué son las Acciones?", content: `Comprar una acción es ser dueño de un pedacito de una empresa. Si la empresa crece, tu acción vale más.\n\n📌 Acciones argentinas (Merval):\n• YPF — energía, la más operada\n• Galicia (GGAL) — banco\n• Pampa Energía (PAMP) — energía\n• Ternium (TXAR) — acero\n• Vista Energy (VIST) — petróleo\n\n✅ Ventajas: potencial de ganancia alta\n⚠️ Riesgos: pueden bajar mucho, son volátiles\n\n💡 Para un perfil moderado: no pongas más del 10-20% de tu plata en acciones individuales. Mejor diversificar con CEDEARs o FCI.` },
-            { id: "fci", icon: "🧺", title: "¿Qué son los FCI (Fondos)?", content: `Un FCI (Fondo Común de Inversión) es como una canasta donde muchos inversores ponen plata y un profesional la administra. Ideal para arrancar.\n\n📌 Tipos:\n• Money Market (ej: Balanz Ahorro) — como un plazo fijo pero podés sacar la plata cuando quieras\n• Renta Fija — invierten en bonos, más estable\n• Renta Variable — invierten en acciones, más riesgo y ganancia\n• Renta Mixta — un poco de todo\n\n✅ Ventajas: diversificación automática, mínimos bajos\n💡 Para empezar: un FCI Money Market para la plata que no usás día a día, rinde más que tenerla en la cuenta.` },
-            { id: "pasos", icon: "🚀", title: "¿Cómo arranco? Paso a paso", content: `1️⃣ Abrí cuenta en un broker (IOL, Balanz, Cocos — elegí el que más te guste)\n2️⃣ Transferí pesos desde tu banco al broker\n3️⃣ Empezá con un FCI Money Market con la plata que no usás\n4️⃣ Cuando te sientas cómodo, probá con una LECAP o una ON\n5️⃣ Si querés dolarizarte: comprá dólar MEP desde el broker (es legal y más barato que el blue)\n6️⃣ Para diversificar: metele a algún CEDEAR como SPY\n\n⏰ Todo esto lo podés hacer desde el celular\n💡 Regla de oro: nunca inviertas plata que vayas a necesitar en los próximos 3-6 meses` },
-          ].map(section => (
-            <div key={section.id} style={{ marginBottom: 10 }}>
-              <button onClick={() => setEduSection(eduSection === section.id ? null : section.id)} style={{ ...S.eduBtn, background: eduSection === section.id ? "#1e3a5f" : "#1e293b", borderColor: eduSection === section.id ? "#3b82f6" : "#334155" }}>
-                <span style={{ fontSize: 20 }}>{section.icon}</span>
-                <span style={{ flex: 1, textAlign: "left", fontWeight: 600, color: "#e2e8f0" }}>{section.title}</span>
-                <span style={{ color: "#64748b", fontSize: 18, transition: "transform .2s", transform: eduSection === section.id ? "rotate(180deg)" : "rotate(0)" }}>▾</span>
-              </button>
-              {eduSection === section.id && (
-                <div style={S.eduContent}>
-                  {section.content.split("\n").map((line, j) => <p key={j} style={{ margin: line === "" ? "8px 0" : "3px 0", lineHeight: 1.7 }}>{line}</p>)}
+          {/* Cards principales */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10, marginBottom: 20 }}>
+            {/* Inflación último mes */}
+            {(() => {
+              const last = ecoData.inflacion[0];
+              const prev = ecoData.inflacion[1];
+              const diff = last && prev ? (last.valor - prev.valor).toFixed(1) : null;
+              return (
+                <div style={{ ...S.mCard, borderLeft: "4px solid #f59e0b" }}>
+                  <span style={S.mLbl}>📈 Inflación mensual</span>
+                  <span style={{ ...S.mVal, color: "#fbbf24" }}>{last ? `${last.valor}%` : "--"}</span>
+                  <span style={{ fontSize: 12, color: "#64748b" }}>{last ? new Date(last.fecha + "T12:00:00").toLocaleDateString("es-AR", { month: "long", year: "numeric" }) : ""}</span>
+                  {diff !== null && <span style={{ fontSize: 12, color: parseFloat(diff) <= 0 ? "#10b981" : "#f87171" }}>{parseFloat(diff) <= 0 ? "▼" : "▲"} {Math.abs(diff)}% vs mes ant.</span>}
                 </div>
-              )}
+              );
+            })()}
+
+            {/* Inflación interanual */}
+            {(() => {
+              const ipc = ecoData.ipc;
+              return (
+                <div style={{ ...S.mCard, borderLeft: "4px solid #ef4444" }}>
+                  <span style={S.mLbl}>📉 Inflación interanual</span>
+                  <span style={{ ...S.mVal, color: "#f87171" }}>{ipc ? `${ipc.valor}%` : "--"}</span>
+                  <span style={{ fontSize: 12, color: "#64748b" }}>{ipc ? new Date(ipc.fecha + "T12:00:00").toLocaleDateString("es-AR", { month: "long", year: "numeric" }) : ""}</span>
+                  <span style={{ fontSize: 12, color: "#64748b" }}>Var. anual IPC</span>
+                </div>
+              );
+            })()}
+
+            {/* Riesgo País */}
+            {(() => {
+              const rp = ecoData.riesgoPais;
+              const nivel = rp ? (rp.valor < 800 ? { label: "Bajo", color: "#10b981" } : rp.valor < 1500 ? { label: "Moderado", color: "#f59e0b" } : { label: "Alto", color: "#f87171" }) : null;
+              return (
+                <div style={{ ...S.mCard, borderLeft: `4px solid ${nivel?.color || "#334155"}` }}>
+                  <span style={S.mLbl}>🌐 Riesgo País</span>
+                  <span style={{ ...S.mVal, color: nivel?.color || "#e2e8f0" }}>{rp ? rp.valor.toLocaleString("es-AR") : "--"}</span>
+                  <span style={{ fontSize: 12, color: "#64748b" }}>{rp ? new Date(rp.fecha + "T12:00:00").toLocaleDateString("es-AR", { month: "long", year: "numeric" }) : ""}</span>
+                  {nivel && <span style={{ fontSize: 12, color: nivel.color }}>{nivel.label}</span>}
+                </div>
+              );
+            })()}
+          </div>
+
+          {/* Tabla inflación últimos 12 meses */}
+          <h4 style={{ fontSize: 14, fontWeight: 700, color: "#f1f5f9", marginBottom: 12 }}>Inflación mensual — últimos 12 meses</h4>
+          {ecoData.loading ? (
+            <p style={S.emp}>Cargando...</p>
+          ) : ecoData.inflacion.length === 0 ? (
+            <p style={S.emp}>Sin datos disponibles</p>
+          ) : (
+            <div style={{ background: "#1e293b", borderRadius: 14, overflow: "hidden", marginBottom: 20 }}>
+              {ecoData.inflacion.map((item, i) => {
+                const prev = ecoData.inflacion[i + 1];
+                const diff = prev ? item.valor - prev.valor : null;
+                const maxVal = Math.max(...ecoData.inflacion.map(x => x.valor));
+                return (
+                  <div key={item.fecha} style={{ display: "flex", alignItems: "center", padding: "10px 16px", borderBottom: i < ecoData.inflacion.length - 1 ? "1px solid #334155" : "none", gap: 12 }}>
+                    <span style={{ fontSize: 13, color: "#94a3b8", minWidth: 110 }}>
+                      {new Date(item.fecha + "T12:00:00").toLocaleDateString("es-AR", { month: "long", year: "numeric" })}
+                    </span>
+                    <div style={{ flex: 1, height: 6, background: "#0f172a", borderRadius: 3, overflow: "hidden" }}>
+                      <div style={{ height: "100%", width: `${(item.valor / maxVal) * 100}%`, background: item.valor > 10 ? "linear-gradient(90deg,#b91c1c,#f87171)" : "linear-gradient(90deg,#0f5132,#10b981)", borderRadius: 3, transition: "width .5s" }} />
+                    </div>
+                    <span style={{ fontSize: 14, fontWeight: 700, color: item.valor > 10 ? "#f87171" : "#10b981", minWidth: 50, textAlign: "right" }}>{item.valor}%</span>
+                    {diff !== null && (
+                      <span style={{ fontSize: 11, color: diff <= 0 ? "#10b981" : "#f87171", minWidth: 55, textAlign: "right" }}>
+                        {diff <= 0 ? "▼" : "▲"} {Math.abs(diff).toFixed(1)}%
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
             </div>
-          ))}
+          )}
+
+          {/* Impacto en tu bolsillo */}
+          {ecoData.inflacion[0] && (
+            <div style={{ ...S.insC, borderLeft: "4px solid #f59e0b", marginBottom: 12 }}>
+              <span style={{ fontSize: 22 }}>💰</span>
+              <div style={{ fontSize: 14, color: "#cbd5e1", lineHeight: 1.8 }}>
+                <p style={{ fontWeight: 700, color: "#e2e8f0", marginBottom: 6 }}>¿Cómo te afecta?</p>
+                <p>Con una inflación de <strong style={{ color: "#fbbf24" }}>{ecoData.inflacion[0].valor}%</strong> mensual, tus pesos pierden poder adquisitivo cada mes.</p>
+                {currentARS > 0 && <p>Tus <strong>{fmt(currentARS)}</strong> en pesos pierden aproximadamente <strong style={{ color: "#f87171" }}>{fmt(currentARS * ecoData.inflacion[0].valor / 100)}</strong> de valor real este mes si no los invertís.</p>}
+                <p style={{ color: "#94a3b8", fontSize: 12, marginTop: 4 }}>💡 Invertir en instrumentos que ajusten por CER o comprar dólares son formas de cubrirte.</p>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
