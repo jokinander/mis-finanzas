@@ -564,7 +564,7 @@ export default function App() {
               <p style={{ fontWeight: 700, color: "#e2e8f0", marginBottom: 6 }}>¿En qué gastás más?</p>
               {catTotals.length === 0 ? <p>No hay egresos cargados este mes.</p> :
                 catTotals.slice(0, 5).map((ct, i) => {
-                  const pct = totalEgMes > 0 ? Math.round((ct.t / totalEgMes) * 100) : 0;
+                  const pct = egARS > 0 ? Math.round((ct.t / egARS) * 100) : 0;
                   return <p key={ct.c}>{i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : "•"} {ct.c}: {fmt(ct.t)} ({pct}%){i === 0 && pct > 40 ? " ← es mucho, fijate si podés bajar" : ""}</p>;
                 })
               }
