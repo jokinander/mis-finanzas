@@ -503,13 +503,11 @@ export default function App() {
 
       {/* === ANÁLISIS === */}
       {view === "insights" && (() => {
-        const totalEgMes = egARS + egUSD * rate;
-        const totalIngMes = ingARS + ingUSD * rate;
-        const catTotals = CAT_EG.map(c => ({ c, t: monthTxs.filter(t => t.type === "egreso" && t.category === c).reduce((s, t) => s + (t.currency === "USD" ? t.amount * rate : t.amount), 0) })).filter(x => x.t > 0).sort((a, b) => b.t - a.t);
+        const catTotals = CAT_EG.map(c => ({ c, t: monthTxs.filter(t => t.type === "egreso" && t.category === c && t.currency === "ARS").reduce((s, t) => s + t.amount, 0) })).filter(x => x.t > 0).sort((a, b) => b.t - a.t);
         const canBuyBlue = balARS > 0 && rate > 0 ? Math.floor((balARS * 0.7) / rate * 100) / 100 : 0;
         const canBuyFull = balARS > 0 && rate > 0 ? Math.floor(balARS / rate * 100) / 100 : 0;
 
-        // Trend: last 3 months with data
+        // Trend: last 3 months with data — separado ARS/USD
         const trend = [];
         for (let i = 0; i < 12; i++) {
           const mi = selMonth - i;
@@ -518,12 +516,12 @@ export default function App() {
           const mt = txs.filter(t => { const d = new Date(t.date + "T12:00:00"); return d.getFullYear() === yi && d.getMonth() === mIdx; });
           if (mt.length > 0 || i === 0) {
             const iA = sumBy(mt,"ingreso","ARS"), eA = sumBy(mt,"egreso","ARS"), iU = sumBy(mt,"ingreso","USD"), eU = sumBy(mt,"egreso","USD");
-            trend.push({ month: FULL_MONTHS[mIdx], ingTotal: iA + iU * rate, egTotal: eA + eU * rate, bal: (iA-eA)+(iU-eU)*rate, count: mt.length });
+            trend.push({ month: FULL_MONTHS[mIdx], ingARS: iA, egARS: eA, ingUSD: iU, egUSD: eU, count: mt.length });
           }
           if (trend.length >= 4) break;
         }
 
-        const avgEg = trend.length > 1 ? trend.slice(1).reduce((s,t) => s + t.egTotal, 0) / (trend.length - 1) : 0;
+        const avgEgARS = trend.length > 1 ? trend.slice(1).reduce((s,t) => s + t.egARS, 0) / (trend.length - 1) : 0;
 
         return (
         <div style={{ animation: "fadeIn .4s" }}>
@@ -535,10 +533,11 @@ export default function App() {
             <div style={{ fontSize: 14, color: "#cbd5e1", lineHeight: 1.7 }}>
               <p style={{ fontWeight: 700, color: "#e2e8f0", marginBottom: 6 }}>Paneo del mes</p>
               {monthTxs.length === 0 ? <p>No hay movimientos cargados este mes todavía.</p> : <>
-                <p>Ingresaste {fmt(totalIngMes)} y gastaste {fmt(totalEgMes)}.</p>
-                <p>Tu balance del mes es de <strong style={{ color: balTotalARS >= 0 ? "#10b981" : "#f87171" }}>{fmt(balTotalARS)}</strong>.</p>
-                {avgEg > 0 && totalEgMes > avgEg * 1.1 && <p>⚠️ Gastaste {Math.round(((totalEgMes/avgEg)-1)*100)}% más que tu promedio de meses anteriores.</p>}
-                {avgEg > 0 && totalEgMes <= avgEg && <p>✅ Tus gastos están por debajo del promedio. ¡Bien!</p>}
+                <p>En pesos — ingresaste <strong style={{ color: "#10b981" }}>{fmt(ingARS)}</strong> y gastaste <strong style={{ color: "#f87171" }}>{fmt(egARS)}</strong>.</p>
+                {ingUSD > 0 || egUSD > 0 ? <p>En dólares — ingresaste <strong style={{ color: "#60a5fa" }}>{fmt(ingUSD,"USD")}</strong> y gastaste <strong style={{ color: "#f87171" }}>{fmt(egUSD,"USD")}</strong>.</p> : null}
+                <p>Balance ARS: <strong style={{ color: balARS >= 0 ? "#10b981" : "#f87171" }}>{fmt(balARS)}</strong>{balUSD !== 0 ? ` · Balance USD: ` : ""}{balUSD !== 0 ? <strong style={{ color: balUSD >= 0 ? "#60a5fa" : "#f87171" }}>{fmt(balUSD,"USD")}</strong> : ""}</p>
+                {avgEgARS > 0 && egARS > avgEgARS * 1.1 && <p>⚠️ Gastaste {Math.round(((egARS/avgEgARS)-1)*100)}% más en pesos que tu promedio de meses anteriores.</p>}
+                {avgEgARS > 0 && egARS <= avgEgARS && <p>✅ Tus gastos en pesos están por debajo del promedio. ¡Bien!</p>}
               </>}
             </div>
           </div>
