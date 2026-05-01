@@ -188,11 +188,12 @@ export default function App() {
   const annualData = MONTHS.map((m, i) => {
     const mt = txs.filter(t => { const d = new Date(t.date + "T12:00:00"); return d.getFullYear() === selYear && d.getMonth() === i; });
     const iA = sumBy(mt, "ingreso", "ARS"), eA = sumBy(mt, "egreso", "ARS"), iU = sumBy(mt, "ingreso", "USD"), eU = sumBy(mt, "egreso", "USD");
-    return { month: m, ingARS: iA, egARS: eA, ingUSD: iU, egUSD: eU, balTotal: (iA - eA) + (iU - eU) * rate };
+    return { month: m, ingARS: iA, egARS: eA, ingUSD: iU, egUSD: eU, balARS: iA - eA, balUSD: iU - eU };
   });
-  let cumul = 0;
-  const cumulData = annualData.map(d => { cumul += d.balTotal; return { ...d, cumul }; });
-  const maxChart = Math.max(...cumulData.map(d => Math.max(d.ingARS + d.ingUSD * rate, d.egARS + d.egUSD * rate, 1)));
+  let cumulARS = 0, cumulUSD = 0;
+  const cumulData = annualData.map(d => { cumulARS += d.balARS; cumulUSD += d.balUSD; return { ...d, cumulARS, cumulUSD }; });
+  const maxChart = Math.max(...cumulData.map(d => Math.max(d.ingARS, d.egARS, 1)));
+  const maxChartUSD = Math.max(...cumulData.map(d => Math.max(d.ingUSD, d.egUSD, 1)));
 
   const catBreakdown = (type) => {
     const cats = type === "ingreso" ? CAT_ING : CAT_EG;
@@ -427,27 +428,76 @@ export default function App() {
       {view === "annual" && (
         <div style={{ animation: "fadeIn .4s" }}>
           <h3 style={{ ...S.secT, marginBottom: 14 }}>Evolución {selYear}</h3>
+
+          {/* Gráfico ARS */}
+          <p style={{ fontSize: 12, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: .5, marginBottom: 8 }}>🇦🇷 Pesos (ARS)</p>
           <div style={S.chBox}>
-            <div style={S.chInner}>{cumulData.map((d, i) => {
-              const tI = d.ingARS + d.ingUSD * rate, tE = d.egARS + d.egUSD * rate;
-              return (
-                <div key={d.month} style={S.chCol} onClick={() => setSelMonth(i)}>
-                  <div style={S.chBars}><div style={{ ...S.chBar, background: "linear-gradient(180deg,#0f5132,#34d399)", height: `${maxChart ? (tI / maxChart) * 100 : 0}%` }} /><div style={{ ...S.chBar, background: "linear-gradient(180deg,#b91c1c,#fca5a5)", height: `${maxChart ? (tE / maxChart) * 100 : 0}%` }} /></div>
-                  <span style={{ fontSize: 10, fontWeight: i === selMonth ? 700 : 400, color: i === selMonth ? "#10b981" : "#64748b" }}>{d.month}</span>
-                </div>);
-            })}</div>
+            <div style={S.chInner}>{cumulData.map((d, i) => (
+              <div key={d.month} style={S.chCol} onClick={() => setSelMonth(i)}>
+                <div style={S.chBars}>
+                  <div style={{ ...S.chBar, background: "linear-gradient(180deg,#0f5132,#34d399)", height: `${maxChart ? (d.ingARS / maxChart) * 100 : 0}%` }} />
+                  <div style={{ ...S.chBar, background: "linear-gradient(180deg,#b91c1c,#fca5a5)", height: `${maxChart ? (d.egARS / maxChart) * 100 : 0}%` }} />
+                </div>
+                <span style={{ fontSize: 10, fontWeight: i === selMonth ? 700 : 400, color: i === selMonth ? "#10b981" : "#64748b" }}>{d.month}</span>
+              </div>
+            ))}</div>
             <div style={{ display: "flex", gap: 14, justifyContent: "center", marginTop: 8 }}><span style={S.lgI}><span style={{ ...S.lgD, background: "#0f5132" }} />Ingresos</span><span style={S.lgI}><span style={{ ...S.lgD, background: "#b91c1c" }} />Egresos</span></div>
           </div>
-          <div style={S.tblW}><table style={S.tbl}><thead><tr><th style={S.th}>Mes</th><th style={{ ...S.th, textAlign: "right" }}>Ingresos</th><th style={{ ...S.th, textAlign: "right" }}>Egresos</th><th style={{ ...S.th, textAlign: "right" }}>Balance</th><th style={{ ...S.th, textAlign: "right" }}>Acumulado</th></tr></thead>
-            <tbody>{cumulData.map((d, i) => (<tr key={d.month} style={{ background: i === selMonth ? "#0f51320a" : "transparent", cursor: "pointer" }} onClick={() => setSelMonth(i)}>
-              <td style={S.td}>{FULL_MONTHS[i]}</td><td style={{ ...S.td, textAlign: "right", color: "#047857" }}>{fmt(d.ingARS + d.ingUSD * rate)}</td><td style={{ ...S.td, textAlign: "right", color: "#b91c1c" }}>{fmt(d.egARS + d.egUSD * rate)}</td>
-              <td style={{ ...S.td, textAlign: "right", fontWeight: 600, color: d.balTotal >= 0 ? "#0f5132" : "#b91c1c" }}>{fmt(d.balTotal)}</td><td style={{ ...S.td, textAlign: "right", fontWeight: 600, color: d.cumul >= 0 ? "#0f5132" : "#b91c1c" }}>{fmt(d.cumul)}</td>
-            </tr>))}</tbody>
-            <tfoot><tr style={{ borderTop: "2px solid #334155" }}><td style={{ ...S.td, fontWeight: 700 }}>Total</td>
-              <td style={{ ...S.td, textAlign: "right", fontWeight: 700, color: "#047857" }}>{fmt(cumulData.reduce((s, d) => s + d.ingARS + d.ingUSD * rate, 0))}</td>
-              <td style={{ ...S.td, textAlign: "right", fontWeight: 700, color: "#b91c1c" }}>{fmt(cumulData.reduce((s, d) => s + d.egARS + d.egUSD * rate, 0))}</td>
-              <td style={{ ...S.td, textAlign: "right", fontWeight: 700, color: cumul >= 0 ? "#0f5132" : "#b91c1c" }}>{fmt(cumul)}</td><td /></tr></tfoot>
+
+          {/* Tabla ARS */}
+          <div style={{ ...S.tblW, marginBottom: 24 }}><table style={S.tbl}>
+            <thead><tr><th style={S.th}>Mes</th><th style={{ ...S.th, textAlign: "right" }}>Ingresos $</th><th style={{ ...S.th, textAlign: "right" }}>Egresos $</th><th style={{ ...S.th, textAlign: "right" }}>Balance $</th><th style={{ ...S.th, textAlign: "right" }}>Acumulado $</th></tr></thead>
+            <tbody>{cumulData.map((d, i) => (
+              <tr key={d.month} style={{ background: i === selMonth ? "#0f51320a" : "transparent", cursor: "pointer" }} onClick={() => setSelMonth(i)}>
+                <td style={S.td}>{FULL_MONTHS[i]}</td>
+                <td style={{ ...S.td, textAlign: "right", color: "#047857" }}>{d.ingARS > 0 ? fmt(d.ingARS) : <span style={{ color: "#334155" }}>—</span>}</td>
+                <td style={{ ...S.td, textAlign: "right", color: "#b91c1c" }}>{d.egARS > 0 ? fmt(d.egARS) : <span style={{ color: "#334155" }}>—</span>}</td>
+                <td style={{ ...S.td, textAlign: "right", fontWeight: 600, color: d.balARS >= 0 ? "#0f5132" : "#b91c1c" }}>{d.ingARS === 0 && d.egARS === 0 ? <span style={{ color: "#334155" }}>—</span> : fmt(d.balARS)}</td>
+                <td style={{ ...S.td, textAlign: "right", fontWeight: 600, color: d.cumulARS >= 0 ? "#0f5132" : "#b91c1c" }}>{fmt(d.cumulARS)}</td>
+              </tr>
+            ))}</tbody>
+            <tfoot><tr style={{ borderTop: "2px solid #334155" }}>
+              <td style={{ ...S.td, fontWeight: 700 }}>Total</td>
+              <td style={{ ...S.td, textAlign: "right", fontWeight: 700, color: "#047857" }}>{fmt(cumulData.reduce((s, d) => s + d.ingARS, 0))}</td>
+              <td style={{ ...S.td, textAlign: "right", fontWeight: 700, color: "#b91c1c" }}>{fmt(cumulData.reduce((s, d) => s + d.egARS, 0))}</td>
+              <td style={{ ...S.td, textAlign: "right", fontWeight: 700, color: cumulARS >= 0 ? "#0f5132" : "#b91c1c" }}>{fmt(cumulARS)}</td><td />
+            </tr></tfoot>
           </table></div>
+
+          {/* Gráfico USD */}
+          {cumulData.some(d => d.ingUSD > 0 || d.egUSD > 0) && (<>
+            <p style={{ fontSize: 12, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: .5, marginBottom: 8 }}>🇺🇸 Dólares (USD)</p>
+            <div style={S.chBox}>
+              <div style={S.chInner}>{cumulData.map((d, i) => (
+                <div key={d.month} style={S.chCol} onClick={() => setSelMonth(i)}>
+                  <div style={S.chBars}>
+                    <div style={{ ...S.chBar, background: "linear-gradient(180deg,#1d4ed8,#60a5fa)", height: `${maxChartUSD ? (d.ingUSD / maxChartUSD) * 100 : 0}%` }} />
+                    <div style={{ ...S.chBar, background: "linear-gradient(180deg,#b91c1c,#fca5a5)", height: `${maxChartUSD ? (d.egUSD / maxChartUSD) * 100 : 0}%` }} />
+                  </div>
+                  <span style={{ fontSize: 10, fontWeight: i === selMonth ? 700 : 400, color: i === selMonth ? "#60a5fa" : "#64748b" }}>{d.month}</span>
+                </div>
+              ))}</div>
+              <div style={{ display: "flex", gap: 14, justifyContent: "center", marginTop: 8 }}><span style={S.lgI}><span style={{ ...S.lgD, background: "#1d4ed8" }} />Ingresos</span><span style={S.lgI}><span style={{ ...S.lgD, background: "#b91c1c" }} />Egresos</span></div>
+            </div>
+            <div style={S.tblW}><table style={S.tbl}>
+              <thead><tr><th style={S.th}>Mes</th><th style={{ ...S.th, textAlign: "right" }}>Ingresos US$</th><th style={{ ...S.th, textAlign: "right" }}>Egresos US$</th><th style={{ ...S.th, textAlign: "right" }}>Balance US$</th><th style={{ ...S.th, textAlign: "right" }}>Acumulado US$</th></tr></thead>
+              <tbody>{cumulData.map((d, i) => (
+                <tr key={d.month} style={{ background: i === selMonth ? "#1d4ed80a" : "transparent", cursor: "pointer" }} onClick={() => setSelMonth(i)}>
+                  <td style={S.td}>{FULL_MONTHS[i]}</td>
+                  <td style={{ ...S.td, textAlign: "right", color: "#3b82f6" }}>{d.ingUSD > 0 ? fmt(d.ingUSD, "USD") : <span style={{ color: "#334155" }}>—</span>}</td>
+                  <td style={{ ...S.td, textAlign: "right", color: "#b91c1c" }}>{d.egUSD > 0 ? fmt(d.egUSD, "USD") : <span style={{ color: "#334155" }}>—</span>}</td>
+                  <td style={{ ...S.td, textAlign: "right", fontWeight: 600, color: d.balUSD >= 0 ? "#3b82f6" : "#b91c1c" }}>{d.ingUSD === 0 && d.egUSD === 0 ? <span style={{ color: "#334155" }}>—</span> : fmt(d.balUSD, "USD")}</td>
+                  <td style={{ ...S.td, textAlign: "right", fontWeight: 600, color: d.cumulUSD >= 0 ? "#3b82f6" : "#b91c1c" }}>{fmt(d.cumulUSD, "USD")}</td>
+                </tr>
+              ))}</tbody>
+              <tfoot><tr style={{ borderTop: "2px solid #334155" }}>
+                <td style={{ ...S.td, fontWeight: 700 }}>Total</td>
+                <td style={{ ...S.td, textAlign: "right", fontWeight: 700, color: "#3b82f6" }}>{fmt(cumulData.reduce((s, d) => s + d.ingUSD, 0), "USD")}</td>
+                <td style={{ ...S.td, textAlign: "right", fontWeight: 700, color: "#b91c1c" }}>{fmt(cumulData.reduce((s, d) => s + d.egUSD, 0), "USD")}</td>
+                <td style={{ ...S.td, textAlign: "right", fontWeight: 700, color: cumulUSD >= 0 ? "#3b82f6" : "#b91c1c" }}>{fmt(cumulUSD, "USD")}</td><td />
+              </tr></tfoot>
+            </table></div>
+          </>)}
         </div>
       )}
 
