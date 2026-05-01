@@ -535,7 +535,7 @@ export default function App() {
               {monthTxs.length === 0 ? <p>No hay movimientos cargados este mes todavía.</p> : <>
                 <p>En pesos — ingresaste <strong style={{ color: "#10b981" }}>{fmt(ingARS)}</strong> y gastaste <strong style={{ color: "#f87171" }}>{fmt(egARS)}</strong>.</p>
                 {ingUSD > 0 || egUSD > 0 ? <p>En dólares — ingresaste <strong style={{ color: "#60a5fa" }}>{fmt(ingUSD,"USD")}</strong> y gastaste <strong style={{ color: "#f87171" }}>{fmt(egUSD,"USD")}</strong>.</p> : null}
-                <p>Balance ARS: <strong style={{ color: balARS >= 0 ? "#10b981" : "#f87171" }}>{fmt(balARS)}</strong>{balUSD !== 0 ? ` · Balance USD: ` : ""}{balUSD !== 0 ? <strong style={{ color: balUSD >= 0 ? "#60a5fa" : "#f87171" }}>{fmt(balUSD,"USD")}</strong> : ""}</p>
+                <p>Balance ARS: <strong style={{ color: balARS >= 0 ? "#10b981" : "#f87171" }}>{fmt(balARS)}</strong>{balUSD !== 0 && <span> · Balance USD: <strong style={{ color: balUSD >= 0 ? "#60a5fa" : "#f87171" }}>{fmt(balUSD,"USD")}</strong></span>}</p>
                 {avgEgARS > 0 && egARS > avgEgARS * 1.1 && <p>⚠️ Gastaste {Math.round(((egARS/avgEgARS)-1)*100)}% más en pesos que tu promedio de meses anteriores.</p>}
                 {avgEgARS > 0 && egARS <= avgEgARS && <p>✅ Tus gastos en pesos están por debajo del promedio. ¡Bien!</p>}
               </>}
