@@ -32,9 +32,11 @@ export default function App() {
   const [showForm, setShowForm] = useState(false);
   const [formType, setFormType] = useState("ingreso");
   const [formCur, setFormCur] = useState("ARS");
-  const [form, setForm] = useState({ description: "", amount: "", category: CAT_ING[0], date: "" });
+  const [form, setForm] = useState({ description: "", amount: "", category: CAT_ING[0], date: "", tipoIngreso: "Fijo" });
   const [editId, setEditId] = useState(null);
   const [filterCat, setFilterCat] = useState("Todas");
+  const [filterType, setFilterType] = useState("Todos");
+  const [filterTipoIng, setFilterTipoIng] = useState("Todos");
 
   // Education section toggle
   const [eduSection, setEduSection] = useState(null);
@@ -99,7 +101,10 @@ export default function App() {
     const d = new Date(t.date + "T12:00:00");
     return d.getFullYear() === selYear && d.getMonth() === selMonth;
   });
-  const filteredTxs = filterCat === "Todas" ? monthTxs : monthTxs.filter(t => t.category === filterCat);
+  const filteredTxs = monthTxs
+    .filter(t => filterType === "Todos" || t.type === filterType)
+    .filter(t => filterCat === "Todas" || t.category === filterCat)
+    .filter(t => filterTipoIng === "Todos" || t.tipoIngreso === filterTipoIng);
 
   const ingARS = sumBy(monthTxs, "ingreso", "ARS"), egARS = sumBy(monthTxs, "egreso", "ARS");
   const ingUSD = sumBy(monthTxs, "ingreso", "USD"), egUSD = sumBy(monthTxs, "egreso", "USD");
@@ -168,15 +173,15 @@ export default function App() {
   // Form
   const openForm = (type, cur = "ARS") => {
     setFormType(type); setFormCur(cur); setEditId(null);
-    setForm({ description: "", amount: "", category: type === "ingreso" ? CAT_ING[0] : CAT_EG[0], date: new Date().toISOString().split("T")[0] });
+    setForm({ description: "", amount: "", category: type === "ingreso" ? CAT_ING[0] : CAT_EG[0], date: new Date().toISOString().split("T")[0], tipoIngreso: "Fijo" });
     setShowForm(true);
   };
-  const openEdit = (tx) => { setFormType(tx.type); setFormCur(tx.currency); setEditId(tx.id); setForm({ description: tx.description, amount: String(tx.amount), category: tx.category, date: tx.date }); setShowForm(true); };
+  const openEdit = (tx) => { setFormType(tx.type); setFormCur(tx.currency); setEditId(tx.id); setForm({ description: tx.description, amount: String(tx.amount), category: tx.category, date: tx.date, tipoIngreso: tx.tipoIngreso || "Fijo" }); setShowForm(true); };
   const handleSave = async () => {
     const amt = parseFloat(form.amount);
     if (!form.description || isNaN(amt) || amt <= 0 || !form.date) return;
     const id = editId || Date.now().toString();
-    await setDoc(doc(db, COLLECTION, id), { type: formType, currency: formCur, description: form.description, amount: amt, category: form.category, date: form.date });
+    await setDoc(doc(db, COLLECTION, id), { type: formType, currency: formCur, description: form.description, amount: amt, category: form.category, date: form.date, tipoIngreso: form.tipoIngreso || "Fijo" });
     setShowForm(false);
   };
   const handleDelete = async (id) => { await deleteDoc(doc(db, COLLECTION, id)); };
@@ -292,7 +297,7 @@ export default function App() {
           {monthTxs.length === 0 ? <p style={S.emp}>Agregá tu primer movimiento del mes</p> :
             monthTxs.sort((a, b) => b.date.localeCompare(a.date)).slice(0, 5).map((tx, i) => (
               <div key={tx.id} style={{ ...S.tR, animation: `slideUp .25s ease ${i * .04}s both` }}>
-                <div style={S.tL}><div style={{ ...S.dot, background: tx.type === "ingreso" ? "#0f5132" : "#b91c1c" }} /><div><div style={S.tD}>{tx.description}</div><div style={S.tM}>{tx.category} · {tx.date} · {tx.currency}</div></div></div>
+                <div style={S.tL}><div style={{ ...S.dot, background: tx.type === "ingreso" ? "#0f5132" : "#b91c1c" }} /><div><div style={S.tD}>{tx.description}</div><div style={S.tM}>{tx.category}{tx.tipoIngreso ? ` · ${tx.tipoIngreso}` : ""} · {tx.date} · {tx.currency}</div></div></div>
                 <span style={{ ...S.tA, color: tx.type === "ingreso" ? "#0f5132" : "#b91c1c" }}>{tx.type === "ingreso" ? "+" : "-"}{fmt(tx.amount, tx.currency)}</span>
               </div>))}
         </div>
@@ -307,18 +312,52 @@ export default function App() {
             <button style={S.bR} onClick={() => openForm("egreso", "ARS")}>+ Egreso $</button>
             <button style={S.bRo} onClick={() => openForm("egreso", "USD")}>+ Egreso US$</button>
           </div>
-          <div style={{ marginBottom: 14, display: "flex", alignItems: "center", gap: 10 }}>
-            <span style={{ fontSize: 12, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: .3 }}>Filtrar por categoría:</span>
-            <select style={{ ...S.fIn, width: "auto", padding: "8px 12px" }} value={filterCat} onChange={e => setFilterCat(e.target.value)}>
-              <option>Todas</option>
-              {CAT_ING.map(c => <option key={c}>{c}</option>)}
-              {CAT_EG.map(c => <option key={c}>{c}</option>)}
-            </select>
+          <div style={{ marginBottom: 14, background: "#1e293b", borderRadius: 14, padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span style={{ fontSize: 11, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: .3 }}>Tipo</span>
+                <select style={{ ...S.fIn, width: "auto", padding: "7px 10px", fontSize: 13 }} value={filterType} onChange={e => setFilterType(e.target.value)}>
+                  <option value="Todos">Todos</option>
+                  <option value="ingreso">Solo Ingresos</option>
+                  <option value="egreso">Solo Egresos</option>
+                </select>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span style={{ fontSize: 11, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: .3 }}>Categoría</span>
+                <select style={{ ...S.fIn, width: "auto", padding: "7px 10px", fontSize: 13 }} value={filterCat} onChange={e => setFilterCat(e.target.value)}>
+                  <option value="Todas">Todas</option>
+                  {CAT_ING.map(c => <option key={c}>{c}</option>)}
+                  {CAT_EG.map(c => <option key={c}>{c}</option>)}
+                </select>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span style={{ fontSize: 11, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: .3 }}>Tipo Ingreso</span>
+                <select style={{ ...S.fIn, width: "auto", padding: "7px 10px", fontSize: 13 }} value={filterTipoIng} onChange={e => setFilterTipoIng(e.target.value)}>
+                  <option value="Todos">Todos</option>
+                  <option value="Fijo">Fijo</option>
+                  <option value="Variable">Variable</option>
+                </select>
+              </div>
+              {(filterType !== "Todos" || filterCat !== "Todas" || filterTipoIng !== "Todos") && (
+                <button style={{ ...S.canBtn, padding: "7px 14px", fontSize: 12, alignSelf: "flex-end" }} onClick={() => { setFilterType("Todos"); setFilterCat("Todas"); setFilterTipoIng("Todos"); }}>✕ Limpiar</button>
+              )}
+            </div>
+            {filteredTxs.length > 0 && (() => {
+              const sumARS = filteredTxs.filter(t => t.currency === "ARS").reduce((s, t) => s + (t.type === "ingreso" ? t.amount : -t.amount), 0);
+              const sumUSD = filteredTxs.filter(t => t.currency === "USD").reduce((s, t) => s + (t.type === "ingreso" ? t.amount : -t.amount), 0);
+              return (
+                <div style={{ display: "flex", gap: 16, paddingTop: 6, borderTop: "1px solid #334155" }}>
+                  <span style={{ fontSize: 12, color: "#64748b" }}>Resultado del filtro ({filteredTxs.length} mov.):</span>
+                  {sumARS !== 0 && <span style={{ fontSize: 13, fontWeight: 700, color: sumARS >= 0 ? "#10b981" : "#f87171" }}>{sumARS >= 0 ? "+" : ""}{fmt(sumARS)}</span>}
+                  {sumUSD !== 0 && <span style={{ fontSize: 13, fontWeight: 700, color: sumUSD >= 0 ? "#60a5fa" : "#f87171" }}>{sumUSD >= 0 ? "+" : ""}{fmt(sumUSD, "USD")}</span>}
+                </div>
+              );
+            })()}
           </div>
-          {filteredTxs.length === 0 ? <p style={S.emp}>{filterCat === "Todas" ? `Sin movimientos en ${FULL_MONTHS[selMonth]}` : `Sin movimientos de "${filterCat}" en ${FULL_MONTHS[selMonth]}`}</p> :
+          {filteredTxs.length === 0 ? <p style={S.emp}>Sin movimientos con los filtros seleccionados</p> :
             filteredTxs.sort((a, b) => b.date.localeCompare(a.date)).map((tx, i) => (
               <div key={tx.id} style={{ ...S.txC, animation: `slideUp .25s ease ${i * .03}s both` }}>
-                <div style={S.tL}><div style={{ ...S.dot, background: tx.type === "ingreso" ? "#0f5132" : "#b91c1c" }} /><div><div style={S.tD}>{tx.description}</div><div style={S.tM}>{tx.category} · {tx.date} · {tx.currency}</div></div></div>
+                <div style={S.tL}><div style={{ ...S.dot, background: tx.type === "ingreso" ? "#0f5132" : "#b91c1c" }} /><div><div style={S.tD}>{tx.description}</div><div style={S.tM}>{tx.category}{tx.tipoIngreso ? ` · ${tx.tipoIngreso}` : ""} · {tx.date} · {tx.currency}</div></div></div>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   <span style={{ ...S.tA, color: tx.type === "ingreso" ? "#0f5132" : "#b91c1c" }}>{tx.type === "ingreso" ? "+" : "-"}{fmt(tx.amount, tx.currency)}</span>
                   <div style={{ display: "flex", gap: 4 }}>
@@ -507,7 +546,12 @@ export default function App() {
         </div>
         <div style={{ marginBottom: 14 }}><label style={S.fLbl}>Descripción</label><input style={S.fIn} placeholder="Ej: Sueldo mensual" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} /></div>
         <div style={{ marginBottom: 14 }}><label style={S.fLbl}>Monto ({formCur === "USD" ? "US$" : "$"})</label><input style={S.fIn} type="number" min="0" step="0.01" placeholder="0.00" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} /></div>
-        <div style={{ marginBottom: 14 }}><label style={S.fLbl}>Categoría</label><select style={S.fIn} value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}>{(formType === "ingreso" ? CAT_ING : CAT_EG).map(c => <option key={c}>{c}</option>)}</select></div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <div style={{ flex: 1, marginBottom: 14 }}><label style={S.fLbl}>Categoría</label><select style={S.fIn} value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}>{(formType === "ingreso" ? CAT_ING : CAT_EG).map(c => <option key={c}>{c}</option>)}</select></div>
+          {formType === "ingreso" && (
+            <div style={{ flex: 1, marginBottom: 14 }}><label style={S.fLbl}>Tipo</label><select style={S.fIn} value={form.tipoIngreso} onChange={e => setForm({ ...form, tipoIngreso: e.target.value })}><option value="Fijo">Fijo</option><option value="Variable">Variable</option></select></div>
+          )}
+        </div>
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8 }}>
           <button style={S.canBtn} onClick={() => setShowForm(false)}>Cancelar</button>
           <button style={formType === "ingreso" ? S.bG : S.bR} onClick={handleSave}>{editId ? "Guardar" : "Agregar"}</button>
