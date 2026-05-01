@@ -47,18 +47,19 @@ export default function App() {
   const fetchEcoData = useCallback(async () => {
     setEcoData(d => ({ ...d, loading: true, error: false }));
     try {
+      const headers = { "Accept": "application/json" };
       const [infRes, ipcRes, rpRes] = await Promise.allSettled([
-        fetch("https://argentinadatos.com/api/v1/finanzas/indices/inflacion"),
-        fetch("https://argentinadatos.com/api/v1/finanzas/indices/inflacionInteranual"),
-        fetch("https://argentinadatos.com/api/v1/finanzas/indices/riesgo-pais"),
+        fetch("https://api.argentinadatos.com/v1/finanzas/indices/inflacion", { headers }),
+        fetch("https://api.argentinadatos.com/v1/finanzas/indices/inflacionInteranual", { headers }),
+        fetch("https://api.argentinadatos.com/v1/finanzas/indices/riesgo-pais", { headers }),
       ]);
-      const inf = infRes.status === "fulfilled" ? await infRes.value.json() : [];
-      const ipc = ipcRes.status === "fulfilled" ? await ipcRes.value.json() : [];
-      const rp = rpRes.status === "fulfilled" ? await rpRes.value.json() : [];
+      const inf = infRes.status === "fulfilled" && infRes.value.ok ? await infRes.value.json() : [];
+      const ipc = ipcRes.status === "fulfilled" && ipcRes.value.ok ? await ipcRes.value.json() : [];
+      const rp = rpRes.status === "fulfilled" && rpRes.value.ok ? await rpRes.value.json() : [];
       setEcoData({
         inflacion: Array.isArray(inf) ? inf.slice(-12).reverse() : [],
-        ipc: Array.isArray(ipc) ? ipc.slice(-1)[0] : null,
-        riesgoPais: Array.isArray(rp) ? rp.slice(-1)[0] : null,
+        ipc: Array.isArray(ipc) && ipc.length > 0 ? ipc.slice(-1)[0] : null,
+        riesgoPais: Array.isArray(rp) && rp.length > 0 ? rp.slice(-1)[0] : null,
         loading: false, error: false,
         lastUpdate: new Date().toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" }),
       });
@@ -230,7 +231,7 @@ export default function App() {
 
       {/* Dollar rates bar */}
       <div style={S.ratesBar}>
-        <div style={S.ratesLeft}>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           {[["blue", "Blue"], ["oficial", "Oficial"], ["mep", "MEP"]].map(([key, label]) => (
             <button key={key} onClick={() => setSelectedRate(key)} style={{ ...S.rateChip, ...(selectedRate === key ? S.rateChipActive : {}) }}>
               <span style={S.rateChipLabel}>{label}</span>
@@ -241,6 +242,31 @@ export default function App() {
               )}
             </button>
           ))}
+          {/* Inflación */}
+          <div style={{ ...S.rateChip, cursor: "default", minWidth: 70 }}>
+            <span style={S.rateChipLabel}>Inflación</span>
+            <span style={{ ...S.rateChipVal, color: "#fbbf24" }}>
+              {ecoData.inflacion[0] ? `${ecoData.inflacion[0].valor}%` : "--"}
+            </span>
+          </div>
+          {/* IPC interanual */}
+          <div style={{ ...S.rateChip, cursor: "default", minWidth: 70 }}>
+            <span style={S.rateChipLabel}>IPC anual</span>
+            <span style={{ ...S.rateChipVal, color: "#f87171" }}>
+              {ecoData.ipc ? `${ecoData.ipc.valor}%` : "--"}
+            </span>
+          </div>
+          {/* Riesgo País */}
+          {(() => {
+            const rp = ecoData.riesgoPais;
+            const color = rp ? (rp.valor < 800 ? "#10b981" : rp.valor < 1500 ? "#f59e0b" : "#f87171") : "#94a3b8";
+            return (
+              <div style={{ ...S.rateChip, cursor: "default", minWidth: 70 }}>
+                <span style={S.rateChipLabel}>Riesgo País</span>
+                <span style={{ ...S.rateChipVal, color }}>{rp ? rp.valor.toLocaleString("es-AR") : "--"}</span>
+              </div>
+            );
+          })()}
         </div>
         <div style={S.ratesRight}>
           {rates.loading && <span style={S.ratesStatus}>Actualizando...</span>}
@@ -265,7 +291,7 @@ export default function App() {
       )}
 
       <div style={S.monthRow}>{MONTHS.map((m, i) => (<button key={m} onClick={() => setSelMonth(i)} style={{ ...S.mp, ...(i === selMonth ? S.mpA : {}) }}>{m}</button>))}</div>
-      <div style={S.nav}>{[["dashboard", "Resumen"], ["transactions", "Movimientos"], ["annual", "Anual"], ["insights", "Análisis"], ["advisor", "📊 Economía"]].map(([k, l]) => (<button key={k} onClick={() => setView(k)} style={{ ...S.nb, ...(view === k ? S.nbA : {}) }}>{l}</button>))}</div>
+      <div style={S.nav}>{[["dashboard", "Resumen"], ["transactions", "Movimientos"], ["weekly", "Semanal"], ["annual", "Anual"], ["insights", "Análisis"]].map(([k, l]) => (<button key={k} onClick={() => setView(k)} style={{ ...S.nb, ...(view === k ? S.nbA : {}) }}>{l}</button>))}</div>
 
       {/* === DASHBOARD === */}
       {view === "dashboard" && (
@@ -529,6 +555,125 @@ export default function App() {
             </div>
           </div>
         </div>
+        );
+      })()}
+
+      {/* === SEMANAL === */}
+      {view === "weekly" && (() => {
+        const today = new Date();
+        const dayOfWeek = today.getDay() === 0 ? 6 : today.getDay() - 1; // lunes=0
+        const weekStart = new Date(today); weekStart.setDate(today.getDate() - dayOfWeek); weekStart.setHours(0,0,0,0);
+        const weekEnd = new Date(weekStart); weekEnd.setDate(weekStart.getDate() + 6); weekEnd.setHours(23,59,59,999);
+        const prevWeekStart = new Date(weekStart); prevWeekStart.setDate(weekStart.getDate() - 7);
+        const prevWeekEnd = new Date(weekStart); prevWeekEnd.setDate(weekStart.getDate() - 1);
+
+        const weekTxs = txs.filter(t => { const d = new Date(t.date + "T12:00:00"); return d >= weekStart && d <= weekEnd; });
+        const prevWeekTxs = txs.filter(t => { const d = new Date(t.date + "T12:00:00"); return d >= prevWeekStart && d <= prevWeekEnd; });
+
+        const wEgARS = weekTxs.filter(t => t.type === "egreso" && t.currency === "ARS").reduce((s,t) => s+t.amount, 0);
+        const wIngARS = weekTxs.filter(t => t.type === "ingreso" && t.currency === "ARS").reduce((s,t) => s+t.amount, 0);
+        const wEgUSD = weekTxs.filter(t => t.type === "egreso" && t.currency === "USD").reduce((s,t) => s+t.amount, 0);
+        const wIngUSD = weekTxs.filter(t => t.type === "ingreso" && t.currency === "USD").reduce((s,t) => s+t.amount, 0);
+        const pwEgARS = prevWeekTxs.filter(t => t.type === "egreso" && t.currency === "ARS").reduce((s,t) => s+t.amount, 0);
+
+        const DAYS = ["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"];
+        const dayTotals = DAYS.map((d, i) => {
+          const dayDate = new Date(weekStart); dayDate.setDate(weekStart.getDate() + i);
+          const dayTxs = weekTxs.filter(t => { const td = new Date(t.date + "T12:00:00"); return td.toDateString() === dayDate.toDateString(); });
+          return { day: d, date: dayDate, eg: dayTxs.filter(t=>t.type==="egreso"&&t.currency==="ARS").reduce((s,t)=>s+t.amount,0), ing: dayTxs.filter(t=>t.type==="ingreso"&&t.currency==="ARS").reduce((s,t)=>s+t.amount,0), count: dayTxs.length };
+        });
+        const maxDay = Math.max(...dayTotals.map(d => Math.max(d.eg, d.ing, 1)));
+
+        const catTotals = CAT_EG.map(c => ({ c, total: weekTxs.filter(t=>t.type==="egreso"&&t.category===c&&t.currency==="ARS").reduce((s,t)=>s+t.amount,0) })).filter(x=>x.total>0).sort((a,b)=>b.total-a.total);
+        const diffVsPrev = wEgARS - pwEgARS;
+
+        const fmtDate = d => d.toLocaleDateString("es-AR", { day: "numeric", month: "short" });
+
+        return (
+          <div style={{ animation: "fadeIn .4s" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <h3 style={S.secT}>📅 Semana actual</h3>
+              <span style={{ fontSize: 12, color: "#64748b" }}>{fmtDate(weekStart)} — {fmtDate(weekEnd)}</span>
+            </div>
+
+            {/* Cards resumen */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 10, marginBottom: 20 }}>
+              <div style={{ ...S.mCard, borderLeft: "4px solid #b91c1c" }}>
+                <span style={S.mLbl}>Gastos semana</span>
+                <span style={{ ...S.mVal, color: "#f87171" }}>{fmt(wEgARS)}</span>
+                {pwEgARS > 0 && <span style={{ fontSize: 12, color: diffVsPrev <= 0 ? "#10b981" : "#f87171" }}>{diffVsPrev <= 0 ? "▼" : "▲"} {fmt(Math.abs(diffVsPrev))} vs sem. ant.</span>}
+              </div>
+              <div style={{ ...S.mCard, borderLeft: "4px solid #0f5132" }}>
+                <span style={S.mLbl}>Ingresos semana</span>
+                <span style={{ ...S.mVal, color: "#10b981" }}>{fmt(wIngARS)}</span>
+                {wIngUSD > 0 && <span style={{ fontSize: 12, color: "#60a5fa" }}>{fmt(wIngUSD, "USD")}</span>}
+              </div>
+              <div style={{ ...S.mCard, borderLeft: `4px solid ${wIngARS-wEgARS >= 0 ? "#0f5132" : "#b91c1c"}` }}>
+                <span style={S.mLbl}>Balance semana</span>
+                <span style={{ ...S.mVal, color: wIngARS-wEgARS >= 0 ? "#10b981" : "#f87171" }}>{fmt(wIngARS-wEgARS)}</span>
+                <span style={{ fontSize: 12, color: "#64748b" }}>{weekTxs.length} movimientos</span>
+              </div>
+              {wEgUSD > 0 && (
+                <div style={{ ...S.mCard, borderLeft: "4px solid #1d4ed8" }}>
+                  <span style={S.mLbl}>Gastos USD</span>
+                  <span style={{ ...S.mVal, color: "#60a5fa" }}>{fmt(wEgUSD, "USD")}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Barras por día */}
+            <div style={{ ...S.chBox, marginBottom: 20 }}>
+              <p style={{ fontSize: 13, fontWeight: 600, color: "#94a3b8", marginBottom: 12 }}>Gastos e ingresos por día</p>
+              <div style={{ display: "flex", gap: 8, alignItems: "flex-end", height: 100 }}>
+                {dayTotals.map((d, i) => (
+                  <div key={d.day} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                    <div style={{ display: "flex", gap: 2, alignItems: "flex-end", height: 80, width: "100%" }}>
+                      <div style={{ flex: 1, background: "linear-gradient(180deg,#0f5132,#34d399)", borderRadius: "3px 3px 0 0", height: `${maxDay ? (d.ing/maxDay)*100 : 0}%`, minHeight: d.ing > 0 ? 3 : 0, transition: "height .5s" }} />
+                      <div style={{ flex: 1, background: "linear-gradient(180deg,#b91c1c,#fca5a5)", borderRadius: "3px 3px 0 0", height: `${maxDay ? (d.eg/maxDay)*100 : 0}%`, minHeight: d.eg > 0 ? 3 : 0, transition: "height .5s" }} />
+                    </div>
+                    <span style={{ fontSize: 10, color: d.date.toDateString() === today.toDateString() ? "#10b981" : "#64748b", fontWeight: d.date.toDateString() === today.toDateString() ? 700 : 400 }}>{d.day}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Gastos por categoría esta semana */}
+            {catTotals.length > 0 && (
+              <div style={{ background: "#1e293b", borderRadius: 16, padding: 18, marginBottom: 16 }}>
+                <p style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0", marginBottom: 14 }}>Gastos por categoría</p>
+                {catTotals.map(ct => {
+                  const pct = wEgARS > 0 ? Math.round((ct.total / wEgARS) * 100) : 0;
+                  return (
+                    <div key={ct.c} style={{ marginBottom: 10 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                        <span style={{ fontSize: 13, color: "#94a3b8" }}>{ct.c}</span>
+                        <span style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0" }}>{fmt(ct.total)} <span style={{ color: "#64748b", fontWeight: 400 }}>({pct}%)</span></span>
+                      </div>
+                      <div style={S.barBg}><div style={{ height: "100%", borderRadius: 3, width: `${pct}%`, background: "linear-gradient(90deg,#b91c1c,#f87171)", transition: "width .5s" }} /></div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Movimientos de la semana */}
+            <h4 style={{ fontSize: 14, fontWeight: 700, color: "#f1f5f9", marginBottom: 10 }}>Movimientos de la semana</h4>
+            {weekTxs.length === 0
+              ? <p style={S.emp}>Sin movimientos esta semana</p>
+              : weekTxs.sort((a,b) => b.date.localeCompare(a.date)).map((tx, i) => (
+                <div key={tx.id} style={{ ...S.txC, animation: `slideUp .2s ease ${i*.03}s both` }}>
+                  <div style={S.tL}>
+                    <div style={{ ...S.dot, background: tx.type === "ingreso" ? "#0f5132" : "#b91c1c" }} />
+                    <div>
+                      <div style={S.tD}>{tx.description}</div>
+                      <div style={S.tM}>{tx.category} · {tx.date}</div>
+                    </div>
+                  </div>
+                  <span style={{ ...S.tA, color: tx.type === "ingreso" ? "#10b981" : "#f87171" }}>{tx.type === "ingreso" ? "+" : "-"}{fmt(tx.amount, tx.currency)}</span>
+                </div>
+              ))
+            }
+          </div>
         );
       })()}
 
