@@ -11,6 +11,7 @@ const INITIAL_ARS = 12401513.35;
 const INITIAL_USD = 4864;
 
 const fmt = (n, cur = "ARS") => {
+  if (n == null || isNaN(Number(n))) return "—";
   const abs = Math.abs(n);
   const f = abs.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const symbol = cur === "USD" ? "US$" : "$";
