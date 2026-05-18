@@ -171,7 +171,7 @@ export default function App() {
     }
     if (balARS > 0 && rate > 0) {
       const canBuy = Math.floor((balARS * 0.7) / rate * 100) / 100;
-      if (canBuy >= 1) ins.push({ icon: "💵", text: `Con tu excedente podrías comprar ~US$${canBuy.toFixed(2)} (usando el 70% al ${selectedRate} $${rate.toLocaleString("es-AR")}). ¡Seguí dolarizando!`, type: "tip" });
+      if (canBuy >= 1) ins.push({ icon: "💵", text: `Con tu excedente podrías comprar ~US$${canBuy.toFixed(2)} (usando el 70% al ${selectedRate} $${rate != null ? rate.toLocaleString("es-AR") : "—"}). ¡Seguí dolarizando!`, type: "tip" });
       else ins.push({ icon: "💵", text: `Tu excedente en pesos es chico para comprar dólares este mes. Intentá reducir gastos.`, type: "neutral" });
     }
     const catTotals = CAT_EG.map(c => ({ c, t: monthTxs.filter(t => t.type === "egreso" && t.category === c).reduce((s, t) => s + (t.currency === "USD" ? t.amount * rate : t.amount), 0) })).filter(x => x.t > 0).sort((a, b) => b.t - a.t);
@@ -550,7 +550,7 @@ export default function App() {
               <p style={{ fontWeight: 700, color: "#e2e8f0", marginBottom: 6 }}>¿Puedo comprar dólares?</p>
               {balARS <= 0 ? <p>❌ Este mes no te quedó excedente en pesos. No es buen momento para comprar.</p> : <>
                 <p>✅ Te quedaron {fmt(balARS)} de excedente en pesos.</p>
-                <p>Al dólar {selectedRate} (${rate.toLocaleString("es-AR")}), podrías comprar:</p>
+                <p>Al dólar {selectedRate} (${rate != null ? rate.toLocaleString("es-AR") : "—"}), podrías comprar:</p>
                 <p>• Usando el 70% del excedente (recomendado): <strong style={{ color: "#10b981" }}>US${canBuyBlue.toFixed(2)}</strong></p>
                 <p>• Usando todo el excedente: <strong>US${canBuyFull.toFixed(2)}</strong></p>
                 {canBuyBlue >= 1 && <p style={{ color: "#10b981" }}>👍 Buen mes para dolarizar una parte.</p>}
@@ -597,7 +597,7 @@ export default function App() {
           {/* Calculadora */}
           <div style={S.calcC}>
             <h4 style={{ fontSize: 16, fontWeight: 700, color: "#f1f5f9", marginBottom: 4 }}>💱 Resumen de patrimonio</h4>
-            <p style={{ fontSize: 13, color: "#64748b", marginBottom: 16 }}>Dólar {selectedRate} — ${rate.toLocaleString("es-AR")}</p>
+            <p style={{ fontSize: 13, color: "#64748b", marginBottom: 16 }}>Dólar {selectedRate} — ${rate != null ? rate.toLocaleString("es-AR") : "—"}</p>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               {[["Saldo ARS", fmt(currentARS), "#e2e8f0"], ["Saldo USD", fmt(currentUSD, "USD"), "#3b82f6"], ["Balance del mes", fmt(balTotalARS), balTotalARS >= 0 ? "#10b981" : "#f87171"], ["Patrimonio total ARS", fmt(currentARS + currentUSD * rate), "#f1f5f9"]].map(([l, v, c]) => (
                 <div key={l} style={S.calcI}><span style={{ fontSize: 11, color: "#64748b", textTransform: "uppercase", letterSpacing: .3 }}>{l}</span><span style={{ fontSize: 18, fontWeight: 700, color: c, fontFamily: "'Fraunces',serif" }}>{v}</span></div>
