@@ -73,7 +73,7 @@ export default function App() {
   // Real-time sync with Firestore
   useEffect(() => {
     const unsub = onSnapshot(collection(db, COLLECTION), (snapshot) => {
-      const items = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      const items = snapshot.docs.map(d => { const data = d.data(); return { id: d.id, ...data, amount: Number(data.amount) || 0 }; });
       setTxs(items);
       setLoading(false);
     });
