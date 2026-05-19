@@ -205,7 +205,7 @@ export default function App() {
     setForm({ description: "", amount: "", category: type === "ingreso" ? CAT_ING[0] : CAT_EG[0], date: new Date().toISOString().split("T")[0], tipoIngreso: "Fijo" });
     setShowForm(true);
   };
-  const openEdit = (tx) => { setFormType(tx.type); setFormCur(tx.currency); setEditId(tx.id); setForm({ description: tx.description, amount: String(tx.amount), category: tx.category, date: tx.date, tipoIngreso: tx.tipoIngreso || "Fijo" }); setShowForm(true); };
+  const openEdit = (tx) => { setFormType(tx.type); setFormCur(tx.currency); setEditId(tx.id); setForm({ description: tx.description, amount: Number(tx.amount), category: tx.category, date: tx.date, tipoIngreso: tx.tipoIngreso || "Fijo" }); setShowForm(true); };
   const handleSave = async () => {
     const amt = parseFloat(form.amount);
     if (!form.description || isNaN(amt) || amt <= 0 || !form.date) return;
