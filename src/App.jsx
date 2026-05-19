@@ -5,14 +5,13 @@ import { collection, doc, setDoc, deleteDoc, onSnapshot } from "firebase/firesto
 const MONTHS = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
 const FULL_MONTHS = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
 const CAT_ING = ["Sueldo","Inversiones","Regalo"];
-const CAT_EG = ["Comida Agile","Comida Banda","Supermercado","Joda","Puchos","Ropa","Alquiler","Servicios/Impuestos","Inversiones","Compra de Dólares","Otro"];
+const CAT_EG = ["Comida Agile","Comida Banda","Supermercado","Joda","Puchos","Ropa","Alquiler","Servicios/Impuestos","Otro"];
 
 const INITIAL_ARS = 12401513.35;
 const INITIAL_USD = 4864;
 
 const fmt = (n, cur = "ARS") => {
-  if (n == null || isNaN(Number(n))) return "—";
-  const abs = Math.abs(Number(n) || 0);
+  const abs = Math.abs(n);
   const f = abs.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const symbol = cur === "USD" ? "US$" : "$";
   return (n < 0 ? "-" : "") + symbol + f;
@@ -171,7 +170,7 @@ export default function App() {
     }
     if (balARS > 0 && rate > 0) {
       const canBuy = Math.floor((balARS * 0.7) / rate * 100) / 100;
-      if (canBuy >= 1) ins.push({ icon: "💵", text: `Con tu excedente podrías comprar ~US$${canBuy.toFixed(2)} (usando el 70% al ${selectedRate} $${rate != null ? (rate ?? 0).toLocaleString("es-AR") : "—"}). ¡Seguí dolarizando!`, type: "tip" });
+      if (canBuy >= 1) ins.push({ icon: "💵", text: `Con tu excedente podrías comprar ~US$${canBuy.toFixed(2)} (usando el 70% al ${selectedRate} $${rate.toLocaleString("es-AR")}). ¡Seguí dolarizando!`, type: "tip" });
       else ins.push({ icon: "💵", text: `Tu excedente en pesos es chico para comprar dólares este mes. Intentá reducir gastos.`, type: "neutral" });
     }
     const catTotals = CAT_EG.map(c => ({ c, t: monthTxs.filter(t => t.type === "egreso" && t.category === c).reduce((s, t) => s + (t.currency === "USD" ? t.amount * rate : t.amount), 0) })).filter(x => x.t > 0).sort((a, b) => b.t - a.t);
@@ -189,12 +188,11 @@ export default function App() {
   const annualData = MONTHS.map((m, i) => {
     const mt = txs.filter(t => { const d = new Date(t.date + "T12:00:00"); return d.getFullYear() === selYear && d.getMonth() === i; });
     const iA = sumBy(mt, "ingreso", "ARS"), eA = sumBy(mt, "egreso", "ARS"), iU = sumBy(mt, "ingreso", "USD"), eU = sumBy(mt, "egreso", "USD");
-    return { month: m, ingARS: iA, egARS: eA, ingUSD: iU, egUSD: eU, balARS: iA - eA, balUSD: iU - eU };
+    return { month: m, ingARS: iA, egARS: eA, ingUSD: iU, egUSD: eU, balTotal: (iA - eA) + (iU - eU) * rate };
   });
-  let cumulARS = 0, cumulUSD = 0;
-  const cumulData = annualData.map(d => { cumulARS += d.balARS; cumulUSD += d.balUSD; return { ...d, cumulARS, cumulUSD }; });
-  const maxChart = Math.max(...cumulData.map(d => Math.max(d.ingARS, d.egARS, 1)));
-  const maxChartUSD = Math.max(...cumulData.map(d => Math.max(d.ingUSD, d.egUSD, 1)));
+  let cumul = 0;
+  const cumulData = annualData.map(d => { cumul += d.balTotal; return { ...d, cumul }; });
+  const maxChart = Math.max(...cumulData.map(d => Math.max(d.ingARS + d.ingUSD * rate, d.egARS + d.egUSD * rate, 1)));
 
   const catBreakdown = (type) => {
     const cats = type === "ingreso" ? CAT_ING : CAT_EG;
@@ -429,86 +427,39 @@ export default function App() {
       {view === "annual" && (
         <div style={{ animation: "fadeIn .4s" }}>
           <h3 style={{ ...S.secT, marginBottom: 14 }}>Evolución {selYear}</h3>
-
-          {/* Gráfico ARS */}
-          <p style={{ fontSize: 12, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: .5, marginBottom: 8 }}>🇦🇷 Pesos (ARS)</p>
           <div style={S.chBox}>
-            <div style={S.chInner}>{cumulData.map((d, i) => (
-              <div key={d.month} style={S.chCol} onClick={() => setSelMonth(i)}>
-                <div style={S.chBars}>
-                  <div style={{ ...S.chBar, background: "linear-gradient(180deg,#0f5132,#34d399)", height: `${maxChart ? (d.ingARS / maxChart) * 100 : 0}%` }} />
-                  <div style={{ ...S.chBar, background: "linear-gradient(180deg,#b91c1c,#fca5a5)", height: `${maxChart ? (d.egARS / maxChart) * 100 : 0}%` }} />
-                </div>
-                <span style={{ fontSize: 10, fontWeight: i === selMonth ? 700 : 400, color: i === selMonth ? "#10b981" : "#64748b" }}>{d.month}</span>
-              </div>
-            ))}</div>
+            <div style={S.chInner}>{cumulData.map((d, i) => {
+              const tI = d.ingARS + d.ingUSD * rate, tE = d.egARS + d.egUSD * rate;
+              return (
+                <div key={d.month} style={S.chCol} onClick={() => setSelMonth(i)}>
+                  <div style={S.chBars}><div style={{ ...S.chBar, background: "linear-gradient(180deg,#0f5132,#34d399)", height: `${maxChart ? (tI / maxChart) * 100 : 0}%` }} /><div style={{ ...S.chBar, background: "linear-gradient(180deg,#b91c1c,#fca5a5)", height: `${maxChart ? (tE / maxChart) * 100 : 0}%` }} /></div>
+                  <span style={{ fontSize: 10, fontWeight: i === selMonth ? 700 : 400, color: i === selMonth ? "#10b981" : "#64748b" }}>{d.month}</span>
+                </div>);
+            })}</div>
             <div style={{ display: "flex", gap: 14, justifyContent: "center", marginTop: 8 }}><span style={S.lgI}><span style={{ ...S.lgD, background: "#0f5132" }} />Ingresos</span><span style={S.lgI}><span style={{ ...S.lgD, background: "#b91c1c" }} />Egresos</span></div>
           </div>
-
-          {/* Tabla ARS */}
-          <div style={{ ...S.tblW, marginBottom: 24 }}><table style={S.tbl}>
-            <thead><tr><th style={S.th}>Mes</th><th style={{ ...S.th, textAlign: "right" }}>Ingresos $</th><th style={{ ...S.th, textAlign: "right" }}>Egresos $</th><th style={{ ...S.th, textAlign: "right" }}>Balance $</th><th style={{ ...S.th, textAlign: "right" }}>Acumulado $</th></tr></thead>
-            <tbody>{cumulData.map((d, i) => (
-              <tr key={d.month} style={{ background: i === selMonth ? "#0f51320a" : "transparent", cursor: "pointer" }} onClick={() => setSelMonth(i)}>
-                <td style={S.td}>{FULL_MONTHS[i]}</td>
-                <td style={{ ...S.td, textAlign: "right", color: "#047857" }}>{d.ingARS > 0 ? fmt(d.ingARS) : <span style={{ color: "#334155" }}>—</span>}</td>
-                <td style={{ ...S.td, textAlign: "right", color: "#b91c1c" }}>{d.egARS > 0 ? fmt(d.egARS) : <span style={{ color: "#334155" }}>—</span>}</td>
-                <td style={{ ...S.td, textAlign: "right", fontWeight: 600, color: d.balARS >= 0 ? "#0f5132" : "#b91c1c" }}>{d.ingARS === 0 && d.egARS === 0 ? <span style={{ color: "#334155" }}>—</span> : fmt(d.balARS)}</td>
-                <td style={{ ...S.td, textAlign: "right", fontWeight: 600, color: d.cumulARS >= 0 ? "#0f5132" : "#b91c1c" }}>{fmt(d.cumulARS)}</td>
-              </tr>
-            ))}</tbody>
-            <tfoot><tr style={{ borderTop: "2px solid #334155" }}>
-              <td style={{ ...S.td, fontWeight: 700 }}>Total</td>
-              <td style={{ ...S.td, textAlign: "right", fontWeight: 700, color: "#047857" }}>{fmt(cumulData.reduce((s, d) => s + d.ingARS, 0))}</td>
-              <td style={{ ...S.td, textAlign: "right", fontWeight: 700, color: "#b91c1c" }}>{fmt(cumulData.reduce((s, d) => s + d.egARS, 0))}</td>
-              <td style={{ ...S.td, textAlign: "right", fontWeight: 700, color: cumulARS >= 0 ? "#0f5132" : "#b91c1c" }}>{fmt(cumulARS)}</td><td />
-            </tr></tfoot>
+          <div style={S.tblW}><table style={S.tbl}><thead><tr><th style={S.th}>Mes</th><th style={{ ...S.th, textAlign: "right" }}>Ingresos</th><th style={{ ...S.th, textAlign: "right" }}>Egresos</th><th style={{ ...S.th, textAlign: "right" }}>Balance</th><th style={{ ...S.th, textAlign: "right" }}>Acumulado</th></tr></thead>
+            <tbody>{cumulData.map((d, i) => (<tr key={d.month} style={{ background: i === selMonth ? "#0f51320a" : "transparent", cursor: "pointer" }} onClick={() => setSelMonth(i)}>
+              <td style={S.td}>{FULL_MONTHS[i]}</td><td style={{ ...S.td, textAlign: "right", color: "#047857" }}>{fmt(d.ingARS + d.ingUSD * rate)}</td><td style={{ ...S.td, textAlign: "right", color: "#b91c1c" }}>{fmt(d.egARS + d.egUSD * rate)}</td>
+              <td style={{ ...S.td, textAlign: "right", fontWeight: 600, color: d.balTotal >= 0 ? "#0f5132" : "#b91c1c" }}>{fmt(d.balTotal)}</td><td style={{ ...S.td, textAlign: "right", fontWeight: 600, color: d.cumul >= 0 ? "#0f5132" : "#b91c1c" }}>{fmt(d.cumul)}</td>
+            </tr>))}</tbody>
+            <tfoot><tr style={{ borderTop: "2px solid #334155" }}><td style={{ ...S.td, fontWeight: 700 }}>Total</td>
+              <td style={{ ...S.td, textAlign: "right", fontWeight: 700, color: "#047857" }}>{fmt(cumulData.reduce((s, d) => s + d.ingARS + d.ingUSD * rate, 0))}</td>
+              <td style={{ ...S.td, textAlign: "right", fontWeight: 700, color: "#b91c1c" }}>{fmt(cumulData.reduce((s, d) => s + d.egARS + d.egUSD * rate, 0))}</td>
+              <td style={{ ...S.td, textAlign: "right", fontWeight: 700, color: cumul >= 0 ? "#0f5132" : "#b91c1c" }}>{fmt(cumul)}</td><td /></tr></tfoot>
           </table></div>
-
-          {/* Gráfico USD */}
-          {cumulData.some(d => d.ingUSD > 0 || d.egUSD > 0) && (<>
-            <p style={{ fontSize: 12, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: .5, marginBottom: 8 }}>🇺🇸 Dólares (USD)</p>
-            <div style={S.chBox}>
-              <div style={S.chInner}>{cumulData.map((d, i) => (
-                <div key={d.month} style={S.chCol} onClick={() => setSelMonth(i)}>
-                  <div style={S.chBars}>
-                    <div style={{ ...S.chBar, background: "linear-gradient(180deg,#1d4ed8,#60a5fa)", height: `${maxChartUSD ? (d.ingUSD / maxChartUSD) * 100 : 0}%` }} />
-                    <div style={{ ...S.chBar, background: "linear-gradient(180deg,#b91c1c,#fca5a5)", height: `${maxChartUSD ? (d.egUSD / maxChartUSD) * 100 : 0}%` }} />
-                  </div>
-                  <span style={{ fontSize: 10, fontWeight: i === selMonth ? 700 : 400, color: i === selMonth ? "#60a5fa" : "#64748b" }}>{d.month}</span>
-                </div>
-              ))}</div>
-              <div style={{ display: "flex", gap: 14, justifyContent: "center", marginTop: 8 }}><span style={S.lgI}><span style={{ ...S.lgD, background: "#1d4ed8" }} />Ingresos</span><span style={S.lgI}><span style={{ ...S.lgD, background: "#b91c1c" }} />Egresos</span></div>
-            </div>
-            <div style={S.tblW}><table style={S.tbl}>
-              <thead><tr><th style={S.th}>Mes</th><th style={{ ...S.th, textAlign: "right" }}>Ingresos US$</th><th style={{ ...S.th, textAlign: "right" }}>Egresos US$</th><th style={{ ...S.th, textAlign: "right" }}>Balance US$</th><th style={{ ...S.th, textAlign: "right" }}>Acumulado US$</th></tr></thead>
-              <tbody>{cumulData.map((d, i) => (
-                <tr key={d.month} style={{ background: i === selMonth ? "#1d4ed80a" : "transparent", cursor: "pointer" }} onClick={() => setSelMonth(i)}>
-                  <td style={S.td}>{FULL_MONTHS[i]}</td>
-                  <td style={{ ...S.td, textAlign: "right", color: "#3b82f6" }}>{d.ingUSD > 0 ? fmt(d.ingUSD, "USD") : <span style={{ color: "#334155" }}>—</span>}</td>
-                  <td style={{ ...S.td, textAlign: "right", color: "#b91c1c" }}>{d.egUSD > 0 ? fmt(d.egUSD, "USD") : <span style={{ color: "#334155" }}>—</span>}</td>
-                  <td style={{ ...S.td, textAlign: "right", fontWeight: 600, color: d.balUSD >= 0 ? "#3b82f6" : "#b91c1c" }}>{d.ingUSD === 0 && d.egUSD === 0 ? <span style={{ color: "#334155" }}>—</span> : fmt(d.balUSD, "USD")}</td>
-                  <td style={{ ...S.td, textAlign: "right", fontWeight: 600, color: d.cumulUSD >= 0 ? "#3b82f6" : "#b91c1c" }}>{fmt(d.cumulUSD, "USD")}</td>
-                </tr>
-              ))}</tbody>
-              <tfoot><tr style={{ borderTop: "2px solid #334155" }}>
-                <td style={{ ...S.td, fontWeight: 700 }}>Total</td>
-                <td style={{ ...S.td, textAlign: "right", fontWeight: 700, color: "#3b82f6" }}>{fmt(cumulData.reduce((s, d) => s + d.ingUSD, 0), "USD")}</td>
-                <td style={{ ...S.td, textAlign: "right", fontWeight: 700, color: "#b91c1c" }}>{fmt(cumulData.reduce((s, d) => s + d.egUSD, 0), "USD")}</td>
-                <td style={{ ...S.td, textAlign: "right", fontWeight: 700, color: cumulUSD >= 0 ? "#3b82f6" : "#b91c1c" }}>{fmt(cumulUSD, "USD")}</td><td />
-              </tr></tfoot>
-            </table></div>
-          </>)}
         </div>
       )}
 
       {/* === ANÁLISIS === */}
       {view === "insights" && (() => {
-        const catTotals = CAT_EG.map(c => ({ c, t: monthTxs.filter(t => t.type === "egreso" && t.category === c && t.currency === "ARS").reduce((s, t) => s + t.amount, 0) })).filter(x => x.t > 0).sort((a, b) => b.t - a.t);
+        const totalEgMes = egARS + egUSD * rate;
+        const totalIngMes = ingARS + ingUSD * rate;
+        const catTotals = CAT_EG.map(c => ({ c, t: monthTxs.filter(t => t.type === "egreso" && t.category === c).reduce((s, t) => s + (t.currency === "USD" ? t.amount * rate : t.amount), 0) })).filter(x => x.t > 0).sort((a, b) => b.t - a.t);
         const canBuyBlue = balARS > 0 && rate > 0 ? Math.floor((balARS * 0.7) / rate * 100) / 100 : 0;
         const canBuyFull = balARS > 0 && rate > 0 ? Math.floor(balARS / rate * 100) / 100 : 0;
 
-        // Trend: last 3 months with data — separado ARS/USD
+        // Trend: last 3 months with data
         const trend = [];
         for (let i = 0; i < 12; i++) {
           const mi = selMonth - i;
@@ -517,12 +468,12 @@ export default function App() {
           const mt = txs.filter(t => { const d = new Date(t.date + "T12:00:00"); return d.getFullYear() === yi && d.getMonth() === mIdx; });
           if (mt.length > 0 || i === 0) {
             const iA = sumBy(mt,"ingreso","ARS"), eA = sumBy(mt,"egreso","ARS"), iU = sumBy(mt,"ingreso","USD"), eU = sumBy(mt,"egreso","USD");
-            trend.push({ month: FULL_MONTHS[mIdx], ingARS: iA, egARS: eA, ingUSD: iU, egUSD: eU, count: mt.length });
+            trend.push({ month: FULL_MONTHS[mIdx], ingTotal: iA + iU * rate, egTotal: eA + eU * rate, bal: (iA-eA)+(iU-eU)*rate, count: mt.length });
           }
           if (trend.length >= 4) break;
         }
 
-        const avgEgARS = trend.length > 1 ? trend.slice(1).reduce((s,t) => s + t.egARS, 0) / (trend.length - 1) : 0;
+        const avgEg = trend.length > 1 ? trend.slice(1).reduce((s,t) => s + t.egTotal, 0) / (trend.length - 1) : 0;
 
         return (
         <div style={{ animation: "fadeIn .4s" }}>
@@ -534,11 +485,10 @@ export default function App() {
             <div style={{ fontSize: 14, color: "#cbd5e1", lineHeight: 1.7 }}>
               <p style={{ fontWeight: 700, color: "#e2e8f0", marginBottom: 6 }}>Paneo del mes</p>
               {monthTxs.length === 0 ? <p>No hay movimientos cargados este mes todavía.</p> : <>
-                <p>En pesos — ingresaste <strong style={{ color: "#10b981" }}>{fmt(ingARS)}</strong> y gastaste <strong style={{ color: "#f87171" }}>{fmt(egARS)}</strong>.</p>
-                {ingUSD > 0 || egUSD > 0 ? <p>En dólares — ingresaste <strong style={{ color: "#60a5fa" }}>{fmt(ingUSD,"USD")}</strong> y gastaste <strong style={{ color: "#f87171" }}>{fmt(egUSD,"USD")}</strong>.</p> : null}
-                <p>Balance ARS: <strong style={{ color: balARS >= 0 ? "#10b981" : "#f87171" }}>{fmt(balARS)}</strong>{balUSD !== 0 && <span> · Balance USD: <strong style={{ color: balUSD >= 0 ? "#60a5fa" : "#f87171" }}>{fmt(balUSD,"USD")}</strong></span>}</p>
-                {avgEgARS > 0 && egARS > avgEgARS * 1.1 && <p>⚠️ Gastaste {Math.round(((egARS/avgEgARS)-1)*100)}% más en pesos que tu promedio de meses anteriores.</p>}
-                {avgEgARS > 0 && egARS <= avgEgARS && <p>✅ Tus gastos en pesos están por debajo del promedio. ¡Bien!</p>}
+                <p>Ingresaste {fmt(totalIngMes)} y gastaste {fmt(totalEgMes)}.</p>
+                <p>Tu balance del mes es de <strong style={{ color: balTotalARS >= 0 ? "#10b981" : "#f87171" }}>{fmt(balTotalARS)}</strong>.</p>
+                {avgEg > 0 && totalEgMes > avgEg * 1.1 && <p>⚠️ Gastaste {Math.round(((totalEgMes/avgEg)-1)*100)}% más que tu promedio de meses anteriores.</p>}
+                {avgEg > 0 && totalEgMes <= avgEg && <p>✅ Tus gastos están por debajo del promedio. ¡Bien!</p>}
               </>}
             </div>
           </div>
@@ -550,7 +500,7 @@ export default function App() {
               <p style={{ fontWeight: 700, color: "#e2e8f0", marginBottom: 6 }}>¿Puedo comprar dólares?</p>
               {balARS <= 0 ? <p>❌ Este mes no te quedó excedente en pesos. No es buen momento para comprar.</p> : <>
                 <p>✅ Te quedaron {fmt(balARS)} de excedente en pesos.</p>
-                <p>Al dólar {selectedRate} (${rate != null ? (rate ?? 0).toLocaleString("es-AR") : "—"}), podrías comprar:</p>
+                <p>Al dólar {selectedRate} (${rate.toLocaleString("es-AR")}), podrías comprar:</p>
                 <p>• Usando el 70% del excedente (recomendado): <strong style={{ color: "#10b981" }}>US${canBuyBlue.toFixed(2)}</strong></p>
                 <p>• Usando todo el excedente: <strong>US${canBuyFull.toFixed(2)}</strong></p>
                 {canBuyBlue >= 1 && <p style={{ color: "#10b981" }}>👍 Buen mes para dolarizar una parte.</p>}
@@ -565,7 +515,7 @@ export default function App() {
               <p style={{ fontWeight: 700, color: "#e2e8f0", marginBottom: 6 }}>¿En qué gastás más?</p>
               {catTotals.length === 0 ? <p>No hay egresos cargados este mes.</p> :
                 catTotals.slice(0, 5).map((ct, i) => {
-                  const pct = egARS > 0 ? Math.round((ct.t / egARS) * 100) : 0;
+                  const pct = totalEgMes > 0 ? Math.round((ct.t / totalEgMes) * 100) : 0;
                   return <p key={ct.c}>{i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : "•"} {ct.c}: {fmt(ct.t)} ({pct}%){i === 0 && pct > 40 ? " ← es mucho, fijate si podés bajar" : ""}</p>;
                 })
               }
@@ -597,7 +547,7 @@ export default function App() {
           {/* Calculadora */}
           <div style={S.calcC}>
             <h4 style={{ fontSize: 16, fontWeight: 700, color: "#f1f5f9", marginBottom: 4 }}>💱 Resumen de patrimonio</h4>
-            <p style={{ fontSize: 13, color: "#64748b", marginBottom: 16 }}>Dólar {selectedRate} — ${rate != null ? (rate ?? 0).toLocaleString("es-AR") : "—"}</p>
+            <p style={{ fontSize: 13, color: "#64748b", marginBottom: 16 }}>Dólar {selectedRate} — ${rate.toLocaleString("es-AR")}</p>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               {[["Saldo ARS", fmt(currentARS), "#e2e8f0"], ["Saldo USD", fmt(currentUSD, "USD"), "#3b82f6"], ["Balance del mes", fmt(balTotalARS), balTotalARS >= 0 ? "#10b981" : "#f87171"], ["Patrimonio total ARS", fmt(currentARS + currentUSD * rate), "#f1f5f9"]].map(([l, v, c]) => (
                 <div key={l} style={S.calcI}><span style={{ fontSize: 11, color: "#64748b", textTransform: "uppercase", letterSpacing: .3 }}>{l}</span><span style={{ fontSize: 18, fontWeight: 700, color: c, fontFamily: "'Fraunces',serif" }}>{v}</span></div>
@@ -844,7 +794,9 @@ export default function App() {
         <div style={{ marginBottom: 14 }}><label style={S.fLbl}>Monto ({formCur === "USD" ? "US$" : "$"})</label><input style={S.fIn} type="number" min="0" step="0.01" placeholder="0.00" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} /></div>
         <div style={{ display: "flex", gap: 10 }}>
           <div style={{ flex: 1, marginBottom: 14 }}><label style={S.fLbl}>Categoría</label><select style={S.fIn} value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}>{(formType === "ingreso" ? CAT_ING : CAT_EG).map(c => <option key={c}>{c}</option>)}</select></div>
-          <div style={{ flex: 1, marginBottom: 14 }}><label style={S.fLbl}>Tipo</label><select style={S.fIn} value={form.tipoIngreso} onChange={e => setForm({ ...form, tipoIngreso: e.target.value })}><option value="Fijo">Fijo</option><option value="Variable">Variable</option></select></div>
+          {formType === "ingreso" && (
+            <div style={{ flex: 1, marginBottom: 14 }}><label style={S.fLbl}>Tipo</label><select style={S.fIn} value={form.tipoIngreso} onChange={e => setForm({ ...form, tipoIngreso: e.target.value })}><option value="Fijo">Fijo</option><option value="Variable">Variable</option></select></div>
+          )}
         </div>
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8 }}>
           <button style={S.canBtn} onClick={() => setShowForm(false)}>Cancelar</button>
