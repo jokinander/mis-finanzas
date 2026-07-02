@@ -1,905 +1,778 @@
 import { useState, useEffect, useCallback } from "react";
-import { db } from "./firebase";
-import { collection, doc, setDoc, deleteDoc, onSnapshot } from "firebase/firestore";
 
-const MONTHS = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
-const FULL_MONTHS = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
-const CAT_ING = ["Sueldo","Inversiones","Regalo"];
-const CAT_EG = ["Comida Agile","Comida Banda","Supermercado","Joda","Puchos","Ropa","Alquiler","Servicios/Impuestos","Otro"];
+const KINES = [
+  { id: "salva", name: "Salva", days: ["Martes", "Jueves"], hours: 7, color: "#2563eb", weekly: 14 },
+  { id: "tucha", name: "Tucha", days: ["Martes", "Jueves"], hours: 7, color: "#7c3aed", weekly: 14 },
+  { id: "jokin", name: "Jokin", days: ["Lunes", "Miércoles", "Viernes"], hours: 7, color: "#059669", weekly: 21 },
+  { id: "tomi", name: "Tomi", days: ["Lunes", "Miércoles", "Viernes"], hours: 7, color: "#dc2626", weekly: 21 },
+];
 
-const INITIAL_ARS = 12401513.35;
-const INITIAL_USD = 4864;
+const MONTHS = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
 
-const fmt = (n, cur = "ARS") => {
-  if (n == null || isNaN(Number(n))) return "—";
-  const abs = Math.abs(Number(n) || 0);
-  const f = abs.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const symbol = cur === "USD" ? "US$" : "$";
-  return (n < 0 ? "-" : "") + symbol + f;
+const emptyWeekData = () => ({
+  disponiblesMes: 0,
+  disponiblesKine: 0,
+  dados: 0,
+  asistidos: 0,
+});
+
+const emptyMonthData = () => ({
+  weeks: [{ ...emptyWeekData() }, { ...emptyWeekData() }, { ...emptyWeekData() }, { ...emptyWeekData() }],
+});
+
+const emptyReplacements = () => ([]);
+
+const initData = () => {
+  const data = {};
+  KINES.forEach(k => {
+    data[k.id] = {};
+    MONTHS.forEach((_, mi) => {
+      data[k.id][mi] = emptyMonthData();
+    });
+  });
+  return data;
 };
 
-const now = new Date();
-const CY = now.getFullYear();
-const CM = now.getMonth();
+const initReplacements = () => {
+  const r = {};
+  MONTHS.forEach((_, mi) => { r[mi] = emptyReplacements(); });
+  return r;
+};
 
-const COLLECTION = "finanzas";
+const STORAGE_KEY = "kines-hours-data-v2";
+const REPL_KEY = "kines-replacements-v2";
 
 export default function App() {
-  const [txs, setTxs] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [selYear, setSelYear] = useState(CY);
-  const [selMonth, setSelMonth] = useState(CM);
-  const [view, setView] = useState("dashboard");
-  const [showForm, setShowForm] = useState(false);
-  const [formType, setFormType] = useState("ingreso");
-  const [formCur, setFormCur] = useState("ARS");
-  const [form, setForm] = useState({ description: "", amount: "", category: CAT_ING[0], date: "", tipoIngreso: "Fijo" });
-  const [editId, setEditId] = useState(null);
-  const [filterCat, setFilterCat] = useState("Todas");
-  const [filterType, setFilterType] = useState("Todos");
-  const [filterTipoIng, setFilterTipoIng] = useState("Todos");
-
-  // Education section toggle
-  const [eduSection, setEduSection] = useState(null);
-
-  // Datos económicos
-  const [ecoData, setEcoData] = useState({ inflacion: [], ipc: [], riesgoPais: null, loading: true, error: false, lastUpdate: null });
-
-  const fetchEcoData = useCallback(async () => {
-    setEcoData(d => ({ ...d, loading: true, error: false }));
+  const [data, setData] = useState(() => {
     try {
-      const headers = { "Accept": "application/json" };
-      const [infRes, ipcRes, rpRes] = await Promise.allSettled([
-        fetch("https://api.argentinadatos.com/v1/finanzas/indices/inflacion", { headers }),
-        fetch("https://api.argentinadatos.com/v1/finanzas/indices/inflacionInteranual", { headers }),
-        fetch("https://api.argentinadatos.com/v1/finanzas/indices/riesgo-pais", { headers }),
-      ]);
-      const inf = infRes.status === "fulfilled" && infRes.value.ok ? await infRes.value.json() : [];
-      const ipc = ipcRes.status === "fulfilled" && ipcRes.value.ok ? await ipcRes.value.json() : [];
-      const rp = rpRes.status === "fulfilled" && rpRes.value.ok ? await rpRes.value.json() : [];
-      setEcoData({
-        inflacion: Array.isArray(inf) ? inf.slice(-12).reverse() : [],
-        ipc: Array.isArray(ipc) && ipc.length > 0 ? ipc.slice(-1)[0] : null,
-        riesgoPais: Array.isArray(rp) && rp.length > 0 ? rp.slice(-1)[0] : null,
-        loading: false, error: false,
-        lastUpdate: new Date().toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" }),
-      });
-    } catch(e) {
-      setEcoData(d => ({ ...d, loading: false, error: true }));
-    }
-  }, []);
-
-  useEffect(() => { fetchEcoData(); }, [fetchEcoData]);
-
-  // Real-time sync with Firestore
-  useEffect(() => {
-    const unsub = onSnapshot(collection(db, COLLECTION), (snapshot) => {
-      const items = snapshot.docs.map(d => { const data = d.data(); return { id: d.id, ...data, amount: Number(data.amount) || 0 }; });
-      setTxs(items);
-      setLoading(false);
-    });
-    return () => unsub();
-  }, []);
-
-  // Dollar rates
-  const [rates, setRates] = useState({ blue: null, oficial: null, mep: null, loading: true, error: false, lastUpdate: null });
-  const [selectedRate, setSelectedRate] = useState("blue");
-
-  // Fetch dollar rates
-  const fetchRates = useCallback(async () => {
-    setRates(r => ({ ...r, loading: true, error: false }));
-    try {
-      const [blueRes, oficialRes, mepRes] = await Promise.all([
-        fetch("https://dolarapi.com/v1/dolares/blue"),
-        fetch("https://dolarapi.com/v1/dolares/oficial"),
-        fetch("https://dolarapi.com/v1/dolares/bolsa"),
-      ]);
-      const [blue, oficial, mep] = await Promise.all([blueRes.json(), oficialRes.json(), mepRes.json()]);
-      setRates({
-        blue: { compra: blue.compra, venta: blue.venta },
-        oficial: { compra: oficial.compra, venta: oficial.venta },
-        mep: { compra: mep.compra, venta: mep.venta },
-        loading: false,
-        error: false,
-        lastUpdate: new Date().toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" }),
-      });
+      const saved = localStorage.getItem(STORAGE_KEY);
+      return saved ? JSON.parse(saved) : initData();
     } catch (e) {
-      console.error("Error fetching rates:", e);
-      setRates(r => ({ ...r, loading: false, error: true }));
+      return initData();
     }
-  }, []);
-
-  useEffect(() => {
-    fetchRates();
-    const interval = setInterval(fetchRates, 5 * 60 * 1000); // refresh every 5 min
-    return () => clearInterval(interval);
-  }, [fetchRates]);
-
-  const rate = rates[selectedRate]?.venta || 1200;
-
-  // Dynamic balances
-  const totalIngARS = txs.filter(t => t.type === "ingreso" && t.currency === "ARS").reduce((s, t) => s + t.amount, 0);
-  const totalEgARS = txs.filter(t => t.type === "egreso" && t.currency === "ARS").reduce((s, t) => s + t.amount, 0);
-  const totalIngUSD = txs.filter(t => t.type === "ingreso" && t.currency === "USD").reduce((s, t) => s + t.amount, 0);
-  const totalEgUSD = txs.filter(t => t.type === "egreso" && t.currency === "USD").reduce((s, t) => s + t.amount, 0);
-  const currentARS = INITIAL_ARS + totalIngARS - totalEgARS;
-  const currentUSD = INITIAL_USD + totalIngUSD - totalEgUSD;
-
-  const sumBy = (list, type, cur) => list.filter(t => t.type === type && t.currency === cur).reduce((s, t) => s + t.amount, 0);
-
-  const monthTxs = txs.filter(t => {
-    const d = new Date(t.date + "T12:00:00");
-    return d.getFullYear() === selYear && d.getMonth() === selMonth;
   });
-  const filteredTxs = monthTxs
-    .filter(t => filterType === "Todos" || t.type === filterType)
-    .filter(t => filterCat === "Todas" || t.category === filterCat)
-    .filter(t => filterTipoIng === "Todos" || t.tipoIngreso === filterTipoIng);
-
-  const ingARS = sumBy(monthTxs, "ingreso", "ARS"), egARS = sumBy(monthTxs, "egreso", "ARS");
-  const ingUSD = sumBy(monthTxs, "ingreso", "USD"), egUSD = sumBy(monthTxs, "egreso", "USD");
-  const balARS = ingARS - egARS, balUSD = ingUSD - egUSD;
-  const balTotalARS = balARS + balUSD * rate;
-
-  // Balance up to month
-  const txsUpToMonth = txs.filter(t => {
-    const d = new Date(t.date + "T12:00:00");
-    return d.getFullYear() < selYear || (d.getFullYear() === selYear && d.getMonth() <= selMonth);
+  const [replacements, setReplacements] = useState(() => {
+    try {
+      const saved = localStorage.getItem(REPL_KEY);
+      return saved ? JSON.parse(saved) : initReplacements();
+    } catch (e) {
+      return initReplacements();
+    }
   });
-  const arsUpTo = INITIAL_ARS + sumBy(txsUpToMonth, "ingreso", "ARS") - sumBy(txsUpToMonth, "egreso", "ARS");
-  const usdUpTo = INITIAL_USD + sumBy(txsUpToMonth, "ingreso", "USD") - sumBy(txsUpToMonth, "egreso", "USD");
+  const [month, setMonth] = useState(new Date().getMonth());
+  const [year, setYear] = useState(2026);
+  const [view, setView] = useState("semanal");
+  const [selectedKine, setSelectedKine] = useState("salva");
+  const [saving, setSaving] = useState(false);
+  const [newReplName, setNewReplName] = useState("");
+  const [newReplHours, setNewReplHours] = useState("");
+  const [newReplReemplaza, setNewReplReemplaza] = useState("");
 
-  // Previous month
-  const prevMonth = selMonth === 0 ? 11 : selMonth - 1;
-  const prevYear = selMonth === 0 ? selYear - 1 : selYear;
-  const prevTxs = txs.filter(t => {
-    const d = new Date(t.date + "T12:00:00");
-    return d.getFullYear() === prevYear && d.getMonth() === prevMonth;
-  });
-  const prevBalTotal = (sumBy(prevTxs, "ingreso", "ARS") - sumBy(prevTxs, "egreso", "ARS")) + (sumBy(prevTxs, "ingreso", "USD") - sumBy(prevTxs, "egreso", "USD")) * rate;
+  const save = useCallback((newData, newRepl) => {
+    setSaving(true);
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(newData || data));
+      localStorage.setItem(REPL_KEY, JSON.stringify(newRepl || replacements));
+    } catch (e) {}
+    setTimeout(() => setSaving(false), 300);
+  }, [data, replacements]);
 
-  // Insights
-  const getInsights = () => {
-    const ins = [];
-    if (monthTxs.length === 0) { ins.push({ icon: "📝", text: "No hay movimientos este mes. ¡Cargá tus ingresos y egresos para ver el análisis!", type: "neutral" }); return ins; }
-    if (balTotalARS > 0) ins.push({ icon: "✅", text: `Este mes te quedó un saldo positivo de ${fmt(balTotalARS)}. ¡Buen mes!`, type: "good" });
-    else if (balTotalARS < 0) ins.push({ icon: "⚠️", text: `Gastaste ${fmt(Math.abs(balTotalARS))} más de lo que ingresaste. Ojo con los gastos.`, type: "warning" });
-    if (prevTxs.length > 0) {
-      const diff = balTotalARS - prevBalTotal;
-      if (diff > 0) ins.push({ icon: "📈", text: `Mejoraste ${fmt(diff)} respecto a ${FULL_MONTHS[prevMonth]}. ¡Seguí así!`, type: "good" });
-      else if (diff < 0) ins.push({ icon: "📉", text: `Tu balance fue ${fmt(Math.abs(diff))} menor que en ${FULL_MONTHS[prevMonth]}.`, type: "neutral" });
-    }
-    if (balARS > 0 && rate > 0) {
-      const canBuy = Math.floor((balARS * 0.7) / rate * 100) / 100;
-      if (canBuy >= 1) ins.push({ icon: "💵", text: `Con tu excedente podrías comprar ~US$${canBuy.toFixed(2)} (usando el 70% al ${selectedRate} $${(rate ?? 0).toLocaleString("es-AR")}). ¡Seguí dolarizando!`, type: "tip" });
-      else ins.push({ icon: "💵", text: `Tu excedente en pesos es chico para comprar dólares este mes. Intentá reducir gastos.`, type: "neutral" });
-    }
-    const catTotals = CAT_EG.map(c => ({ c, t: monthTxs.filter(t => t.type === "egreso" && t.category === c).reduce((s, t) => s + (t.currency === "USD" ? t.amount * rate : t.amount), 0) })).filter(x => x.t > 0).sort((a, b) => b.t - a.t);
-    const totalEg = egARS + egUSD * rate;
-    if (catTotals.length > 0) {
-      const top = catTotals[0];
-      const pct = totalEg > 0 ? Math.round((top.t / totalEg) * 100) : 0;
-      ins.push({ icon: "🏷️", text: `Mayor gasto: "${top.c}" (${pct}%). ${pct > 40 ? "Es mucho, ¿podés optimizarlo?" : "Dentro de lo razonable."}`, type: pct > 40 ? "warning" : "neutral" });
-    }
-    ins.push({ icon: "🏦", text: `Saldo acumulado a fin de ${FULL_MONTHS[selMonth]}: ${fmt(arsUpTo)} + ${fmt(usdUpTo, "USD")}.`, type: "good" });
-    return ins;
+  const updateWeekField = (kineId, monthIdx, weekIdx, field, value) => {
+    const val = value === "" ? 0 : Math.max(0, parseInt(value) || 0);
+    setData(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      next[kineId][monthIdx].weeks[weekIdx][field] = val;
+      save(next, replacements);
+      return next;
+    });
   };
 
-  // Annual
-  const annualData = MONTHS.map((m, i) => {
-    const mt = txs.filter(t => { const d = new Date(t.date + "T12:00:00"); return d.getFullYear() === selYear && d.getMonth() === i; });
-    const iA = sumBy(mt, "ingreso", "ARS"), eA = sumBy(mt, "egreso", "ARS"), iU = sumBy(mt, "ingreso", "USD"), eU = sumBy(mt, "egreso", "USD");
-    return { month: m, ingARS: iA, egARS: eA, ingUSD: iU, egUSD: eU, balTotal: (iA - eA) + (iU - eU) * rate };
-  });
-  let cumul = 0;
-  const cumulData = annualData.map(d => { cumul += d.balTotal; return { ...d, cumul }; });
-  const maxChart = Math.max(...cumulData.map(d => Math.max(d.ingARS + d.ingUSD * rate, d.egARS + d.egUSD * rate, 1)));
-
-  const catBreakdown = (type) => {
-    const cats = type === "ingreso" ? CAT_ING : CAT_EG;
-    return cats.map(c => ({ c, total: monthTxs.filter(t => t.type === type && t.category === c).reduce((s, t) => s + (t.currency === "USD" ? t.amount * rate : t.amount), 0) })).filter(x => x.total > 0).sort((a, b) => b.total - a.total);
+  const addWeek = (kineId, monthIdx) => {
+    setData(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      if (next[kineId][monthIdx].weeks.length < 6) {
+        next[kineId][monthIdx].weeks.push({ ...emptyWeekData() });
+        save(next, replacements);
+      }
+      return next;
+    });
   };
 
-  // Form
-  const openForm = (type, cur = "ARS") => {
-    setFormType(type); setFormCur(cur); setEditId(null);
-    setForm({ description: "", amount: "", category: type === "ingreso" ? CAT_ING[0] : CAT_EG[0], date: new Date().toISOString().split("T")[0], tipoIngreso: "Fijo" });
-    setShowForm(true);
+  const removeWeek = (kineId, monthIdx) => {
+    setData(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      if (next[kineId][monthIdx].weeks.length > 1) {
+        next[kineId][monthIdx].weeks.pop();
+        save(next, replacements);
+      }
+      return next;
+    });
   };
-  const openEdit = (tx) => { setFormType(tx.type); setFormCur(tx.currency); setEditId(tx.id); setForm({ description: tx.description, amount: Number(tx.amount), category: tx.category, date: tx.date, tipoIngreso: tx.tipoIngreso || "Fijo" }); setShowForm(true); };
-  const handleSave = async () => {
-    const amt = parseFloat(form.amount);
-    if (!form.description || isNaN(amt) || amt <= 0 || !form.date) return;
-    const id = editId || Date.now().toString();
-    await setDoc(doc(db, COLLECTION, id), { type: formType, currency: formCur, description: form.description, amount: amt, category: form.category, date: form.date, tipoIngreso: form.tipoIngreso || "Fijo" });
-    setShowForm(false);
+
+  const addReplacement = () => {
+    if (!newReplName.trim() || !newReplHours) return;
+    setReplacements(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      next[month].push({ name: newReplName.trim(), hours: parseInt(newReplHours) || 0, reemplaza: newReplReemplaza });
+      save(data, next);
+      return next;
+    });
+    setNewReplName("");
+    setNewReplHours("");
+    setNewReplReemplaza("");
   };
-  const handleDelete = async (id) => { await deleteDoc(doc(db, COLLECTION, id)); };
 
-  const years = [...new Set([...txs.map(t => new Date(t.date + "T12:00:00").getFullYear()), CY])].sort();
+  const removeReplacement = (idx) => {
+    setReplacements(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      next[month].splice(idx, 1);
+      save(data, next);
+      return next;
+    });
+  };
 
-  if (loading) return <div style={{ display:"flex",flexDirection:"column",gap:12,justifyContent:"center",alignItems:"center",height:"100vh",color:"#64748b",fontSize:15,fontFamily:"'Outfit',sans-serif",background:"#0c0f14" }}><div style={{ width:24,height:24,borderRadius:"50%",background:"#0f5132",animation:"pulse 1.2s infinite" }}/><span>Cargando...</span></div>;
+  const getMonthTotals = (kineId, monthIdx) => {
+    const weeks = data[kineId][monthIdx].weeks;
+    return {
+      disponiblesMes: weeks.reduce((s, w) => s + w.disponiblesMes, 0),
+      disponiblesKine: weeks.reduce((s, w) => s + w.disponiblesKine, 0),
+      dados: weeks.reduce((s, w) => s + w.dados, 0),
+      asistidos: weeks.reduce((s, w) => s + w.asistidos, 0),
+      cancelados: weeks.reduce((s, w) => s + (w.dados - w.asistidos), 0),
+    };
+  };
+
+  const getGeneralMonth = (monthIdx) => {
+    const totals = { disponiblesMes: 0, disponiblesKine: 0, dados: 0, asistidos: 0, cancelados: 0 };
+    KINES.forEach(k => {
+      const mt = getMonthTotals(k.id, monthIdx);
+      totals.disponiblesMes += mt.disponiblesMes;
+      totals.disponiblesKine += mt.disponiblesKine;
+      totals.dados += mt.dados;
+      totals.asistidos += mt.asistidos;
+      totals.cancelados += mt.cancelados;
+    });
+    const replHours = (replacements[monthIdx] || []).reduce((s, r) => s + r.hours, 0);
+    totals.reemplazos = replHours;
+    return totals;
+  };
+
+  const pct = (a, b) => b === 0 ? "—" : `${Math.round((a / b) * 100)}%`;
+
+  const [copied, setCopied] = useState(false);
+
+  const exportResumen = () => {
+    let text = `══════════════════════════════════\n`;
+    text += `  RESUMEN ${MONTHS[month].toUpperCase()} ${year}\n`;
+    text += `  Grupo Agile — Kinesiología\n`;
+    text += `══════════════════════════════════\n\n`;
+
+    KINES.forEach(k => {
+      const t = getMonthTotals(k.id, month);
+      text += `▸ ${k.name.toUpperCase()} (${k.days.join(", ")})\n`;
+      text += `  Turnos disp. mes:   ${t.disponiblesMes}\n`;
+      text += `  Turnos disp. kine:  ${t.disponiblesKine}\n`;
+      text += `  Turnos dados:       ${t.dados}\n`;
+      text += `  Turnos asistidos:   ${t.asistidos}\n`;
+      text += `  Cancelados:         ${t.cancelados}\n`;
+      text += `  % Asistencia:       ${pct(t.asistidos, t.dados)}\n\n`;
+    });
+
+    const g = getGeneralMonth(month);
+    text += `──────────────────────────────────\n`;
+    text += `  TOTAL GENERAL\n`;
+    text += `──────────────────────────────────\n`;
+    text += `  Turnos disp. mes:   ${g.disponiblesMes}\n`;
+    text += `  Turnos disp. kine:  ${g.disponiblesKine}\n`;
+    text += `  Turnos dados:       ${g.dados}\n`;
+    text += `  Turnos asistidos:   ${g.asistidos}\n`;
+    text += `  Cancelados:         ${g.cancelados}\n`;
+    text += `  % Asistencia:       ${pct(g.asistidos, g.dados)}\n\n`;
+
+    const repls = replacements[month] || [];
+    if (repls.length > 0) {
+      text += `──────────────────────────────────\n`;
+      text += `  REEMPLAZOS\n`;
+      text += `──────────────────────────────────\n`;
+      repls.forEach(r => {
+        text += `  ${r.name}${r.reemplaza ? ` → reemplaza a ${r.reemplaza}` : ""}: ${r.hours}hs\n`;
+      });
+      text += `  Total reemplazos: ${repls.reduce((s, r) => s + r.hours, 0)}hs\n`;
+    }
+
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    }).catch(() => {
+      window.prompt("Copiá este texto:", text);
+    });
+  };
+
+  const kineObj = KINES.find(k => k.id === selectedKine);
 
   return (
-    <div style={S.root}>
+    <div style={{
+      fontFamily: "'DM Sans', sans-serif",
+      background: "linear-gradient(135deg, #0f172a 0%, #1e293b 100%)",
+      minHeight: "100vh",
+      color: "#e2e8f0",
+      padding: "0",
+    }}>
+      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" />
+
       {/* Header */}
-      <div style={S.topBar}>
-        <div style={S.logoWrap}><span style={S.logoIcon}>◈</span><span style={S.logoText}>Mis Finanzas</span></div>
-        <div style={S.topRight}>
-          <select value={selYear} onChange={e => setSelYear(Number(e.target.value))} style={S.yearSel}>{years.map(y => <option key={y}>{y}</option>)}</select>
+      <div style={{
+        background: "rgba(15,23,42,0.8)",
+        borderBottom: "1px solid rgba(148,163,184,0.1)",
+        padding: "16px 24px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        flexWrap: "wrap",
+        gap: 12,
+        backdropFilter: "blur(12px)",
+        position: "sticky",
+        top: 0,
+        zIndex: 100,
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{
+            width: 40, height: 40, borderRadius: 8,
+            background: "linear-gradient(135deg, #2563eb, #7c3aed)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 18, fontWeight: 700, color: "white",
+          }}>GA</div>
+          <div>
+            <h1 style={{ margin: 0, fontSize: 16, fontWeight: 700, letterSpacing: "-0.02em" }}>Grupo Agile</h1>
+            <p style={{ margin: 0, fontSize: 11, color: "#64748b" }}>Kinesiología — Control de Horas {year}</p>
+          </div>
         </div>
+        {saving && <span style={{ fontSize: 11, color: "#facc15", fontFamily: "'Space Mono', monospace" }}>Guardando...</span>}
       </div>
 
-      {/* Dollar rates bar */}
-      <div style={S.ratesBar}>
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {[["blue", "Blue"], ["oficial", "Oficial"], ["mep", "MEP"]].map(([key, label]) => (
-            <button key={key} onClick={() => setSelectedRate(key)} style={{ ...S.rateChip, ...(selectedRate === key ? S.rateChipActive : {}) }}>
-              <span style={S.rateChipLabel}>{label}</span>
-              {rates[key] ? (
-                <span style={S.rateChipVal}>${rates[key].venta?.toLocaleString("es-AR")}</span>
-              ) : (
-                <span style={S.rateChipVal}>--</span>
-              )}
-            </button>
-          ))}
-          {/* Inflación */}
-          <div style={{ ...S.rateChip, cursor: "default", minWidth: 70 }}>
-            <span style={S.rateChipLabel}>Inflación</span>
-            <span style={{ ...S.rateChipVal, color: "#fbbf24" }}>
-              {ecoData.inflacion[0] ? `${ecoData.inflacion[0].valor}%` : "--"}
-            </span>
-          </div>
-          {/* IPC interanual */}
-          <div style={{ ...S.rateChip, cursor: "default", minWidth: 70 }}>
-            <span style={S.rateChipLabel}>IPC anual</span>
-            <span style={{ ...S.rateChipVal, color: "#f87171" }}>
-              {ecoData.ipc ? `${ecoData.ipc.valor}%` : "--"}
-            </span>
-          </div>
-          {/* Riesgo País */}
-          {(() => {
-            const rp = ecoData.riesgoPais;
-            const color = rp ? (rp.valor < 800 ? "#10b981" : rp.valor < 1500 ? "#f59e0b" : "#f87171") : "#94a3b8";
-            return (
-              <div style={{ ...S.rateChip, cursor: "default", minWidth: 70 }}>
-                <span style={S.rateChipLabel}>Riesgo País</span>
-                <span style={{ ...S.rateChipVal, color }}>{rp ? rp.valor.toLocaleString("es-AR") : "--"}</span>
-              </div>
-            );
-          })()}
-        </div>
-        <div style={S.ratesRight}>
-          {rates.loading && <span style={S.ratesStatus}>Actualizando...</span>}
-          {rates.error && <span style={{ ...S.ratesStatus, color: "#f87171" }}>Error al cargar</span>}
-          {rates.lastUpdate && !rates.loading && (
-            <span style={S.ratesStatus}>
-              Últ. {rates.lastUpdate}
-              <button style={S.refreshBtn} onClick={fetchRates} title="Actualizar">↻</button>
-            </span>
-          )}
-        </div>
+      {/* Navigation */}
+      <div style={{
+        display: "flex", gap: 0, padding: "12px 24px",
+        borderBottom: "1px solid rgba(148,163,184,0.08)",
+        overflowX: "auto",
+      }}>
+        {[
+          { key: "semanal", label: "Semanal" },
+          { key: "mensual", label: "Mensual" },
+          { key: "general", label: "General" },
+          { key: "anual", label: "Anual" },
+        ].map(v => (
+          <button key={v.key} onClick={() => setView(v.key)} style={{
+            padding: "8px 20px",
+            background: view === v.key ? "rgba(37,99,235,0.2)" : "transparent",
+            border: "1px solid",
+            borderColor: view === v.key ? "#2563eb" : "transparent",
+            borderRadius: 8,
+            color: view === v.key ? "#60a5fa" : "#94a3b8",
+            fontWeight: 600,
+            fontSize: 13,
+            cursor: "pointer",
+            transition: "all 0.2s",
+            fontFamily: "'DM Sans', sans-serif",
+            whiteSpace: "nowrap",
+          }}>{v.label}</button>
+        ))}
       </div>
 
-      {/* Rate detail */}
-      {rates[selectedRate] && (
-        <div style={S.rateDetail}>
-          <span style={S.rateDetailItem}>Compra: <strong>${rates[selectedRate].compra?.toLocaleString("es-AR")}</strong></span>
-          <span style={S.rateDetailDiv}>·</span>
-          <span style={S.rateDetailItem}>Venta: <strong>${rates[selectedRate].venta?.toLocaleString("es-AR")}</strong></span>
-          <span style={S.rateDetailTag}>Dólar {selectedRate.charAt(0).toUpperCase() + selectedRate.slice(1)}</span>
-        </div>
-      )}
+      {/* Month selector */}
+      <div style={{ padding: "12px 24px", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <select value={month} onChange={e => setMonth(parseInt(e.target.value))} style={{
+          background: "#1e293b", border: "1px solid #334155", borderRadius: 8, color: "#e2e8f0",
+          padding: "8px 12px", fontSize: 14, fontFamily: "'DM Sans', sans-serif", fontWeight: 600,
+        }}>
+          {MONTHS.map((m, i) => <option key={i} value={i}>{m}</option>)}
+        </select>
+        <select value={year} onChange={e => setYear(parseInt(e.target.value))} style={{
+          background: "#1e293b", border: "1px solid #334155", borderRadius: 8, color: "#e2e8f0",
+          padding: "8px 12px", fontSize: 14, fontFamily: "'DM Sans', sans-serif", fontWeight: 600,
+        }}>
+          {[2025, 2026, 2027, 2028].map(y => <option key={y} value={y}>{y}</option>)}
+        </select>
 
-      <div style={S.monthRow}>{MONTHS.map((m, i) => (<button key={m} onClick={() => setSelMonth(i)} style={{ ...S.mp, ...(i === selMonth ? S.mpA : {}) }}>{m}</button>))}</div>
-      <div style={S.nav}>{[["dashboard", "Resumen"], ["transactions", "Movimientos"], ["weekly", "Semanal"], ["annual", "Anual"], ["insights", "Análisis"]].map(([k, l]) => (<button key={k} onClick={() => setView(k)} style={{ ...S.nb, ...(view === k ? S.nbA : {}) }}>{l}</button>))}</div>
-
-      {/* === DASHBOARD === */}
-      {view === "dashboard" && (
-        <div style={{ animation: "fadeIn .4s" }}>
-          <div style={S.patRow}>
-            <div style={S.patCardARS}>
-              <span style={S.patLbl}>🇦🇷 PATRIMONIO EN PESOS</span>
-              <div style={S.patVal}>{fmt(currentARS)}</div>
-              <div style={S.patSub2}>Saldo a {MONTHS[selMonth]}: {fmt(arsUpTo)}</div>
-            </div>
-            <div style={S.patCardUSD}>
-              <span style={S.patLblUSD}>🇺🇸 PATRIMONIO EN DÓLARES</span>
-              <div style={S.patValUSD}>{fmt(currentUSD, "USD")}</div>
-              <div style={S.patSub2USD}>Saldo a {MONTHS[selMonth]}: {fmt(usdUpTo, "USD")}</div>
-            </div>
+        {(view === "semanal" || view === "mensual") && (
+          <div style={{ display: "flex", gap: 4, marginLeft: "auto" }}>
+            {KINES.map(k => (
+              <button key={k.id} onClick={() => setSelectedKine(k.id)} style={{
+                padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600,
+                border: "2px solid",
+                borderColor: selectedKine === k.id ? k.color : "transparent",
+                background: selectedKine === k.id ? `${k.color}22` : "rgba(51,65,85,0.3)",
+                color: selectedKine === k.id ? k.color : "#94a3b8",
+                cursor: "pointer", transition: "all 0.2s",
+                fontFamily: "'DM Sans', sans-serif",
+              }}>{k.name}</button>
+            ))}
           </div>
+        )}
+      </div>
 
-          <div style={S.cards3}>
-            <div style={{ ...S.mCard, borderLeft: `4px solid ${balARS >= 0 ? "#0f5132" : "#b91c1c"}`, animation: "popIn .35s ease 0s both" }}>
-              <span style={S.mLbl}>Balance ARS — {MONTHS[selMonth]}</span>
-              <span style={{ ...S.mVal, color: balARS >= 0 ? "#10b981" : "#f87171" }}>{fmt(balARS)}</span>
-              <div style={S.mSub}><span style={{ color: "#10b981" }}>↑ {fmt(ingARS)}</span><span style={{ color: "#f87171" }}>↓ {fmt(egARS)}</span></div>
+      {/* Content */}
+      <div style={{ padding: "8px 24px 24px" }}>
+
+        {/* VISTA SEMANAL */}
+        {view === "semanal" && (
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+              <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>
+                <span style={{ color: kineObj.color }}>{kineObj.name}</span> — {MONTHS[month]}
+              </h2>
+              <span style={{
+                fontSize: 11, color: "#64748b", fontFamily: "'Space Mono', monospace",
+                background: "rgba(100,116,139,0.1)", padding: "4px 8px", borderRadius: 6,
+              }}>
+                {kineObj.days.join(" · ")} | {kineObj.weekly}hs/sem
+              </span>
             </div>
-            <div style={{ ...S.mCard, borderLeft: `4px solid ${balUSD >= 0 ? "#1d4ed8" : "#b91c1c"}`, animation: "popIn .35s ease 0.07s both" }}>
-              <span style={S.mLbl}>Balance USD — {MONTHS[selMonth]}</span>
-              <span style={{ ...S.mVal, color: balUSD >= 0 ? "#60a5fa" : "#f87171" }}>{fmt(balUSD, "USD")}</span>
-              <div style={S.mSub}><span style={{ color: "#60a5fa" }}>↑ {fmt(ingUSD, "USD")}</span><span style={{ color: "#f87171" }}>↓ {fmt(egUSD, "USD")}</span></div>
+
+            <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+              <button onClick={() => addWeek(selectedKine, month)} style={{
+                padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600,
+                background: "rgba(37,99,235,0.15)", border: "1px solid #2563eb33", color: "#60a5fa",
+                cursor: "pointer", fontFamily: "'DM Sans', sans-serif",
+              }}>+ Agregar semana</button>
+              <button onClick={() => removeWeek(selectedKine, month)} style={{
+                padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600,
+                background: "rgba(220,38,38,0.1)", border: "1px solid #dc262633", color: "#f87171",
+                cursor: "pointer", fontFamily: "'DM Sans', sans-serif",
+              }}>- Quitar semana</button>
+              <span style={{ fontSize: 12, color: "#64748b", alignSelf: "center", fontFamily: "'Space Mono', monospace" }}>
+                {data[selectedKine][month].weeks.length} semanas
+              </span>
             </div>
-            <div style={{ ...S.mCard, borderLeft: "4px solid #b91c1c", animation: "popIn .35s ease 0.14s both" }}>
-              <span style={S.mLbl}>Egresos ARS — {MONTHS[selMonth]}</span>
-              <span style={{ ...S.mVal, color: "#f87171" }}>{fmt(egARS)}</span>
-              <div style={S.mSub}><span style={{ color: "#94a3b8" }}>{monthTxs.filter(t => t.type === "egreso" && t.currency === "ARS").length} movimientos</span></div>
+
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 13 }}>
+                <thead>
+                  <tr>
+                    <th style={{ ...thStyle, width: 180 }}>Métrica</th>
+                    {data[selectedKine][month].weeks.map((_, i) => (
+                      <th key={i} style={thStyle}>Sem {i + 1}</th>
+                    ))}
+                    <th style={{ ...thStyle, color: "#facc15" }}>Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    { key: "disponiblesMes", label: "Turnos disp. mes" },
+                    { key: "disponiblesKine", label: "Turnos disp. kine" },
+                    { key: "dados", label: "Turnos dados" },
+                    { key: "asistidos", label: "Turnos asistidos" },
+                  ].map(field => (
+                    <tr key={field.key}>
+                      <td style={labelStyle}>{field.label}</td>
+                      {data[selectedKine][month].weeks.map((w, wi) => (
+                        <td key={wi} style={cellStyle}>
+                          <input
+                            type="number"
+                            min="0"
+                            value={w[field.key] || ""}
+                            placeholder="0"
+                            onChange={e => updateWeekField(selectedKine, month, wi, field.key, e.target.value)}
+                            style={inputStyle}
+                          />
+                        </td>
+                      ))}
+                      <td style={{ ...cellStyle, fontWeight: 700, fontFamily: "'Space Mono', monospace", color: "#facc15" }}>
+                        {data[selectedKine][month].weeks.reduce((s, w) => s + (w[field.key] || 0), 0)}
+                      </td>
+                    </tr>
+                  ))}
+                  <tr>
+                    <td style={{ ...labelStyle, color: "#f87171" }}>Cancelados</td>
+                    {data[selectedKine][month].weeks.map((w, wi) => (
+                      <td key={wi} style={{ ...cellStyle, fontFamily: "'Space Mono', monospace", color: "#f87171" }}>
+                        {w.dados - w.asistidos}
+                      </td>
+                    ))}
+                    <td style={{ ...cellStyle, fontWeight: 700, fontFamily: "'Space Mono', monospace", color: "#f87171" }}>
+                      {data[selectedKine][month].weeks.reduce((s, w) => s + (w.dados - w.asistidos), 0)}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style={{ ...labelStyle, color: "#60a5fa" }}>% Asistencia</td>
+                    {data[selectedKine][month].weeks.map((w, wi) => (
+                      <td key={wi} style={{ ...cellStyle, fontFamily: "'Space Mono', monospace", color: "#60a5fa" }}>
+                        {pct(w.asistidos, w.dados)}
+                      </td>
+                    ))}
+                    <td style={{ ...cellStyle, fontWeight: 700, fontFamily: "'Space Mono', monospace", color: "#60a5fa" }}>
+                      {pct(
+                        data[selectedKine][month].weeks.reduce((s, w) => s + w.asistidos, 0),
+                        data[selectedKine][month].weeks.reduce((s, w) => s + w.dados, 0)
+                      )}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
-          </div>
 
-          <div style={S.qRow}>
-            <button style={S.bG} onClick={() => openForm("ingreso", "ARS")}>+ Ingreso $</button>
-            <button style={S.bGo} onClick={() => openForm("ingreso", "USD")}>+ Ingreso US$</button>
-            <button style={S.bR} onClick={() => openForm("egreso", "ARS")}>+ Egreso $</button>
-            <button style={S.bRo} onClick={() => openForm("egreso", "USD")}>+ Egreso US$</button>
-          </div>
-
-          <div style={S.bkRow}>
-            {[["ingreso", "Ingresos"], ["egreso", "Egresos"]].map(([tp, lb]) => {
-              const items = catBreakdown(tp); const tot = items.reduce((s, i) => s + i.total, 0);
-              return (<div key={tp} style={S.bkCard}><h3 style={S.bkT}>{lb} por categoría</h3>
-                {items.length === 0 ? <p style={S.emp}>Sin {lb.toLowerCase()} este mes</p> : items.map(it => (
-                  <div key={it.c} style={{ marginBottom: 11 }}><div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                    <span style={{ fontSize: 13, color: "#94a3b8" }}>{it.c}</span><span style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0" }}>{fmt(it.total)}</span></div>
-                    <div style={S.barBg}><div style={{ height: "100%", borderRadius: 3, transition: "width .5s", width: `${(it.total / tot) * 100}%`, background: tp === "ingreso" ? "linear-gradient(90deg,#0f5132,#10b981)" : "linear-gradient(90deg,#b91c1c,#f87171)" }} /></div>
-                  </div>
-                ))}</div>);
-            })}
-          </div>
-
-          <h3 style={S.secT}>Últimos movimientos</h3>
-          {monthTxs.length === 0 ? <p style={S.emp}>Agregá tu primer movimiento del mes</p> :
-            monthTxs.sort((a, b) => b.date.localeCompare(a.date)).slice(0, 5).map((tx, i) => (
-              <div key={tx.id} style={{ ...S.tR, animation: `slideUp .25s ease ${i * .04}s both` }}>
-                <div style={S.tL}><div style={{ ...S.dot, background: tx.type === "ingreso" ? "#0f5132" : "#b91c1c" }} /><div><div style={S.tD}>{tx.description}</div><div style={S.tM}>{tx.category}{tx.tipoIngreso ? ` · ${tx.tipoIngreso}` : ""} · {tx.date} · {tx.currency}</div></div></div>
-                <span style={{ ...S.tA, color: tx.type === "ingreso" ? "#0f5132" : "#b91c1c" }}>{tx.type === "ingreso" ? "+" : "-"}{fmt(tx.amount, tx.currency)}</span>
-              </div>))}
-        </div>
-      )}
-
-      {/* === TRANSACTIONS === */}
-      {view === "transactions" && (
-        <div style={{ animation: "fadeIn .4s" }}>
-          <div style={S.qRow}>
-            <button style={S.bG} onClick={() => openForm("ingreso", "ARS")}>+ Ingreso $</button>
-            <button style={S.bGo} onClick={() => openForm("ingreso", "USD")}>+ Ingreso US$</button>
-            <button style={S.bR} onClick={() => openForm("egreso", "ARS")}>+ Egreso $</button>
-            <button style={S.bRo} onClick={() => openForm("egreso", "USD")}>+ Egreso US$</button>
-          </div>
-          <div style={{ marginBottom: 14, background: "#1e293b", borderRadius: 14, padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <span style={{ fontSize: 11, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: .3 }}>Tipo</span>
-                <select style={{ ...S.fIn, width: "auto", padding: "7px 10px", fontSize: 13 }} value={filterType} onChange={e => setFilterType(e.target.value)}>
-                  <option value="Todos">Todos</option>
-                  <option value="ingreso">Solo Ingresos</option>
-                  <option value="egreso">Solo Egresos</option>
+            {/* Reemplazos */}
+            <div style={{
+              marginTop: 24, padding: 16, borderRadius: 12,
+              background: "rgba(51,65,85,0.2)", border: "1px solid rgba(148,163,184,0.1)",
+            }}>
+              <h3 style={{ margin: "0 0 12px", fontSize: 14, fontWeight: 700, color: "#fbbf24" }}>
+                Reemplazos — {MONTHS[month]}
+              </h3>
+              {(replacements[month] || []).map((r, i) => (
+                <div key={i} style={{
+                  display: "flex", alignItems: "center", gap: 12, marginBottom: 8,
+                  background: "rgba(251,191,36,0.05)", padding: "8px 12px", borderRadius: 8,
+                  flexWrap: "wrap",
+                }}>
+                  <span style={{ fontWeight: 600, fontSize: 13 }}>{r.name}</span>
+                  {r.reemplaza && <span style={{ fontSize: 12, color: "#94a3b8" }}>→ reemplaza a <strong>{r.reemplaza}</strong></span>}
+                  <span style={{ fontFamily: "'Space Mono', monospace", fontSize: 13, color: "#fbbf24" }}>{r.hours}hs</span>
+                  <button onClick={() => removeReplacement(i)} style={{
+                    marginLeft: "auto", background: "none", border: "none", color: "#f87171",
+                    cursor: "pointer", fontSize: 16, padding: "0 4px",
+                  }}>×</button>
+                </div>
+              ))}
+              <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                <input
+                  placeholder="Nombre"
+                  value={newReplName}
+                  onChange={e => setNewReplName(e.target.value)}
+                  style={{ ...inputStyle, width: 120 }}
+                />
+                <select
+                  value={newReplReemplaza}
+                  onChange={e => setNewReplReemplaza(e.target.value)}
+                  style={{
+                    background: "rgba(15,23,42,0.6)", border: "1px solid #334155", borderRadius: 6,
+                    color: "#e2e8f0", padding: "6px 8px", fontSize: 12, fontFamily: "'DM Sans', sans-serif",
+                  }}
+                >
+                  <option value="">¿A quién reemplaza?</option>
+                  {KINES.map(k => <option key={k.id} value={k.name}>{k.name}</option>)}
                 </select>
+                <input
+                  type="number"
+                  placeholder="Horas"
+                  value={newReplHours}
+                  onChange={e => setNewReplHours(e.target.value)}
+                  style={{ ...inputStyle, width: 70 }}
+                />
+                <button onClick={addReplacement} style={{
+                  padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600,
+                  background: "rgba(251,191,36,0.2)", border: "1px solid #fbbf2433",
+                  color: "#fbbf24", cursor: "pointer", fontFamily: "'DM Sans', sans-serif",
+                }}>+ Agregar</button>
               </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <span style={{ fontSize: 11, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: .3 }}>Categoría</span>
-                <select style={{ ...S.fIn, width: "auto", padding: "7px 10px", fontSize: 13 }} value={filterCat} onChange={e => setFilterCat(e.target.value)}>
-                  <option value="Todas">Todas</option>
-                  {CAT_ING.map(c => <option key={c}>{c}</option>)}
-                  {CAT_EG.map(c => <option key={c}>{c}</option>)}
-                </select>
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <span style={{ fontSize: 11, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: .3 }}>Tipo Ingreso</span>
-                <select style={{ ...S.fIn, width: "auto", padding: "7px 10px", fontSize: 13 }} value={filterTipoIng} onChange={e => setFilterTipoIng(e.target.value)}>
-                  <option value="Todos">Todos</option>
-                  <option value="Fijo">Fijo</option>
-                  <option value="Variable">Variable</option>
-                </select>
-              </div>
-              {(filterType !== "Todos" || filterCat !== "Todas" || filterTipoIng !== "Todos") && (
-                <button style={{ ...S.canBtn, padding: "7px 14px", fontSize: 12, alignSelf: "flex-end" }} onClick={() => { setFilterType("Todos"); setFilterCat("Todas"); setFilterTipoIng("Todos"); }}>✕ Limpiar</button>
-              )}
             </div>
-            {filteredTxs.length > 0 && (() => {
-              const sumARS = filteredTxs.filter(t => t.currency === "ARS").reduce((s, t) => s + (t.type === "ingreso" ? t.amount : -t.amount), 0);
-              const sumUSD = filteredTxs.filter(t => t.currency === "USD").reduce((s, t) => s + (t.type === "ingreso" ? t.amount : -t.amount), 0);
+          </div>
+        )}
+
+        {/* VISTA MENSUAL */}
+        {view === "mensual" && (
+          <div>
+            <h2 style={{ margin: "0 0 16px", fontSize: 18, fontWeight: 700 }}>
+              <span style={{ color: kineObj.color }}>{kineObj.name}</span> — Resumen {MONTHS[month]}
+            </h2>
+            {(() => {
+              const t = getMonthTotals(selectedKine, month);
               return (
-                <div style={{ display: "flex", gap: 16, paddingTop: 6, borderTop: "1px solid #334155" }}>
-                  <span style={{ fontSize: 12, color: "#64748b" }}>Resultado del filtro ({filteredTxs.length} mov.):</span>
-                  {sumARS !== 0 && <span style={{ fontSize: 13, fontWeight: 700, color: sumARS >= 0 ? "#10b981" : "#f87171" }}>{sumARS >= 0 ? "+" : ""}{fmt(sumARS)}</span>}
-                  {sumUSD !== 0 && <span style={{ fontSize: 13, fontWeight: 700, color: sumUSD >= 0 ? "#60a5fa" : "#f87171" }}>{sumUSD >= 0 ? "+" : ""}{fmt(sumUSD, "USD")}</span>}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
+                  {[
+                    { label: "Disp. Mes", value: t.disponiblesMes, color: "#94a3b8" },
+                    { label: "Disp. Kine", value: t.disponiblesKine, color: "#60a5fa" },
+                    { label: "Dados", value: t.dados, color: "#a78bfa" },
+                    { label: "Asistidos", value: t.asistidos, color: "#34d399" },
+                    { label: "Cancelados", value: t.cancelados, color: "#f87171" },
+                    { label: "% Asistencia", value: pct(t.asistidos, t.dados), color: "#facc15" },
+                  ].map((item, i) => (
+                    <div key={i} style={{
+                      background: "rgba(30,41,59,0.6)", borderRadius: 12,
+                      padding: 16, border: `1px solid ${item.color}22`,
+                    }}>
+                      <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4, fontWeight: 600 }}>{item.label}</div>
+                      <div style={{ fontSize: 28, fontWeight: 700, color: item.color, fontFamily: "'Space Mono', monospace" }}>
+                        {item.value}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+
+            {(() => {
+              const t = getMonthTotals(selectedKine, month);
+              const max = Math.max(t.disponiblesMes, 1);
+              const bars = [
+                { label: "Disp. Mes", value: t.disponiblesMes, color: "#475569" },
+                { label: "Disp. Kine", value: t.disponiblesKine, color: "#2563eb" },
+                { label: "Dados", value: t.dados, color: "#7c3aed" },
+                { label: "Asistidos", value: t.asistidos, color: "#059669" },
+                { label: "Cancelados", value: t.cancelados, color: "#dc2626" },
+              ];
+              return (
+                <div style={{ marginTop: 24 }}>
+                  {bars.map((b, i) => (
+                    <div key={i} style={{ marginBottom: 8 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
+                        <span style={{ color: "#94a3b8" }}>{b.label}</span>
+                        <span style={{ fontFamily: "'Space Mono', monospace", color: b.color }}>{b.value}</span>
+                      </div>
+                      <div style={{ height: 8, borderRadius: 4, background: "rgba(51,65,85,0.4)" }}>
+                        <div style={{
+                          height: "100%", borderRadius: 4, background: b.color,
+                          width: `${(b.value / max) * 100}%`, transition: "width 0.5s ease",
+                        }} />
+                      </div>
+                    </div>
+                  ))}
                 </div>
               );
             })()}
           </div>
-          {filteredTxs.length === 0 ? <p style={S.emp}>Sin movimientos con los filtros seleccionados</p> :
-            filteredTxs.sort((a, b) => b.date.localeCompare(a.date)).map((tx, i) => (
-              <div key={tx.id} style={{ ...S.txC, animation: `slideUp .25s ease ${i * .03}s both` }}>
-                <div style={S.tL}><div style={{ ...S.dot, background: tx.type === "ingreso" ? "#0f5132" : "#b91c1c" }} /><div><div style={S.tD}>{tx.description}</div><div style={S.tM}>{tx.category}{tx.tipoIngreso ? ` · ${tx.tipoIngreso}` : ""} · {tx.date} · {tx.currency}</div></div></div>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <span style={{ ...S.tA, color: tx.type === "ingreso" ? "#0f5132" : "#b91c1c" }}>{tx.type === "ingreso" ? "+" : "-"}{fmt(tx.amount, tx.currency)}</span>
-                  <div style={{ display: "flex", gap: 4 }}>
-                    <button style={S.eBtn} onClick={() => openEdit(tx)}>✎</button>
-                    <button style={S.dBtn} onClick={() => handleDelete(tx.id)}>✕</button>
-                  </div>
-                </div>
-              </div>))}
-        </div>
-      )}
+        )}
 
-      {/* === ANNUAL === */}
-      {view === "annual" && (
-        <div style={{ animation: "fadeIn .4s" }}>
-          <h3 style={{ ...S.secT, marginBottom: 14 }}>Evolución {selYear}</h3>
-          <div style={S.chBox}>
-            <div style={S.chInner}>{cumulData.map((d, i) => {
-              const tI = d.ingARS + d.ingUSD * rate, tE = d.egARS + d.egUSD * rate;
-              return (
-                <div key={d.month} style={S.chCol} onClick={() => setSelMonth(i)}>
-                  <div style={S.chBars}><div style={{ ...S.chBar, background: "linear-gradient(180deg,#0f5132,#34d399)", height: `${maxChart ? (tI / maxChart) * 100 : 0}%` }} /><div style={{ ...S.chBar, background: "linear-gradient(180deg,#b91c1c,#fca5a5)", height: `${maxChart ? (tE / maxChart) * 100 : 0}%` }} /></div>
-                  <span style={{ fontSize: 10, fontWeight: i === selMonth ? 700 : 400, color: i === selMonth ? "#10b981" : "#64748b" }}>{d.month}</span>
-                </div>);
-            })}</div>
-            <div style={{ display: "flex", gap: 14, justifyContent: "center", marginTop: 8 }}><span style={S.lgI}><span style={{ ...S.lgD, background: "#0f5132" }} />Ingresos</span><span style={S.lgI}><span style={{ ...S.lgD, background: "#b91c1c" }} />Egresos</span></div>
-          </div>
-          <div style={S.tblW}><table style={S.tbl}><thead><tr><th style={S.th}>Mes</th><th style={{ ...S.th, textAlign: "right" }}>Ingresos</th><th style={{ ...S.th, textAlign: "right" }}>Egresos</th><th style={{ ...S.th, textAlign: "right" }}>Balance</th><th style={{ ...S.th, textAlign: "right" }}>Acumulado</th></tr></thead>
-            <tbody>{cumulData.map((d, i) => (<tr key={d.month} style={{ background: i === selMonth ? "#0f51320a" : "transparent", cursor: "pointer" }} onClick={() => setSelMonth(i)}>
-              <td style={S.td}>{FULL_MONTHS[i]}</td><td style={{ ...S.td, textAlign: "right", color: "#047857" }}>{fmt(d.ingARS + d.ingUSD * rate)}</td><td style={{ ...S.td, textAlign: "right", color: "#b91c1c" }}>{fmt(d.egARS + d.egUSD * rate)}</td>
-              <td style={{ ...S.td, textAlign: "right", fontWeight: 600, color: d.balTotal >= 0 ? "#0f5132" : "#b91c1c" }}>{fmt(d.balTotal)}</td><td style={{ ...S.td, textAlign: "right", fontWeight: 600, color: d.cumul >= 0 ? "#0f5132" : "#b91c1c" }}>{fmt(d.cumul)}</td>
-            </tr>))}</tbody>
-            <tfoot><tr style={{ borderTop: "2px solid #334155" }}><td style={{ ...S.td, fontWeight: 700 }}>Total</td>
-              <td style={{ ...S.td, textAlign: "right", fontWeight: 700, color: "#047857" }}>{fmt(cumulData.reduce((s, d) => s + d.ingARS + d.ingUSD * rate, 0))}</td>
-              <td style={{ ...S.td, textAlign: "right", fontWeight: 700, color: "#b91c1c" }}>{fmt(cumulData.reduce((s, d) => s + d.egARS + d.egUSD * rate, 0))}</td>
-              <td style={{ ...S.td, textAlign: "right", fontWeight: 700, color: cumul >= 0 ? "#0f5132" : "#b91c1c" }}>{fmt(cumul)}</td><td /></tr></tfoot>
-          </table></div>
-        </div>
-      )}
-
-      {/* === ANÁLISIS === */}
-      {view === "insights" && (() => {
-        const totalEgMes = egARS + egUSD * rate;
-        const totalIngMes = ingARS + ingUSD * rate;
-        const catTotals = CAT_EG.map(c => ({ c, t: monthTxs.filter(t => t.type === "egreso" && t.category === c).reduce((s, t) => s + (t.currency === "USD" ? t.amount * rate : t.amount), 0) })).filter(x => x.t > 0).sort((a, b) => b.t - a.t);
-        const canBuyBlue = balARS > 0 && rate > 0 ? Math.floor((balARS * 0.7) / rate * 100) / 100 : 0;
-        const canBuyFull = balARS > 0 && rate > 0 ? Math.floor(balARS / rate * 100) / 100 : 0;
-
-        // Trend: last 3 months with data
-        const trend = [];
-        for (let i = 0; i < 12; i++) {
-          const mi = selMonth - i;
-          const yi = mi < 0 ? selYear - 1 : selYear;
-          const mIdx = mi < 0 ? mi + 12 : mi;
-          const mt = txs.filter(t => { const d = new Date(t.date + "T12:00:00"); return d.getFullYear() === yi && d.getMonth() === mIdx; });
-          if (mt.length > 0 || i === 0) {
-            const iA = sumBy(mt,"ingreso","ARS"), eA = sumBy(mt,"egreso","ARS"), iU = sumBy(mt,"ingreso","USD"), eU = sumBy(mt,"egreso","USD");
-            trend.push({ month: FULL_MONTHS[mIdx], ingTotal: iA + iU * rate, egTotal: eA + eU * rate, bal: (iA-eA)+(iU-eU)*rate, count: mt.length });
-          }
-          if (trend.length >= 4) break;
-        }
-
-        const avgEg = trend.length > 1 ? trend.slice(1).reduce((s,t) => s + t.egTotal, 0) / (trend.length - 1) : 0;
-
-        return (
-        <div style={{ animation: "fadeIn .4s" }}>
-          <h3 style={S.secT}>📊 Análisis — {FULL_MONTHS[selMonth]} {selYear}</h3>
-
-          {/* Paneo general */}
-          <div style={{ ...S.insC, borderLeft: "4px solid #a78bfa", marginBottom: 12 }}>
-            <span style={{ fontSize: 22 }}>📋</span>
-            <div style={{ fontSize: 14, color: "#cbd5e1", lineHeight: 1.7 }}>
-              <p style={{ fontWeight: 700, color: "#e2e8f0", marginBottom: 6 }}>Paneo del mes</p>
-              {monthTxs.length === 0 ? <p>No hay movimientos cargados este mes todavía.</p> : <>
-                <p>Ingresaste {fmt(totalIngMes)} y gastaste {fmt(totalEgMes)}.</p>
-                <p>Tu balance del mes es de <strong style={{ color: balTotalARS >= 0 ? "#10b981" : "#f87171" }}>{fmt(balTotalARS)}</strong>.</p>
-                {avgEg > 0 && totalEgMes > avgEg * 1.1 && <p>⚠️ Gastaste {Math.round(((totalEgMes/avgEg)-1)*100)}% más que tu promedio de meses anteriores.</p>}
-                {avgEg > 0 && totalEgMes <= avgEg && <p>✅ Tus gastos están por debajo del promedio. ¡Bien!</p>}
-              </>}
-            </div>
-          </div>
-
-          {/* Compra de dólares */}
-          <div style={{ ...S.insC, borderLeft: `4px solid ${canBuyBlue >= 1 ? "#10b981" : "#f59e0b"}`, marginBottom: 12 }}>
-            <span style={{ fontSize: 22 }}>💵</span>
-            <div style={{ fontSize: 14, color: "#cbd5e1", lineHeight: 1.7 }}>
-              <p style={{ fontWeight: 700, color: "#e2e8f0", marginBottom: 6 }}>¿Puedo comprar dólares?</p>
-              {balARS <= 0 ? <p>❌ Este mes no te quedó excedente en pesos. No es buen momento para comprar.</p> : <>
-                <p>✅ Te quedaron {fmt(balARS)} de excedente en pesos.</p>
-                <p>Al dólar {selectedRate} (${(rate ?? 0).toLocaleString("es-AR")}), podrías comprar:</p>
-                <p>• Usando el 70% del excedente (recomendado): <strong style={{ color: "#10b981" }}>US${canBuyBlue.toFixed(2)}</strong></p>
-                <p>• Usando todo el excedente: <strong>US${canBuyFull.toFixed(2)}</strong></p>
-                {canBuyBlue >= 1 && <p style={{ color: "#10b981" }}>👍 Buen mes para dolarizar una parte.</p>}
-              </>}
-            </div>
-          </div>
-
-          {/* Mayor gasto */}
-          <div style={{ ...S.insC, borderLeft: "4px solid #f59e0b", marginBottom: 12 }}>
-            <span style={{ fontSize: 22 }}>🏷️</span>
-            <div style={{ fontSize: 14, color: "#cbd5e1", lineHeight: 1.7 }}>
-              <p style={{ fontWeight: 700, color: "#e2e8f0", marginBottom: 6 }}>¿En qué gastás más?</p>
-              {catTotals.length === 0 ? <p>No hay egresos cargados este mes.</p> :
-                catTotals.slice(0, 5).map((ct, i) => {
-                  const pct = totalEgMes > 0 ? Math.round((ct.t / totalEgMes) * 100) : 0;
-                  return <p key={ct.c}>{i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : "•"} {ct.c}: {fmt(ct.t)} ({pct}%){i === 0 && pct > 40 ? " ← es mucho, fijate si podés bajar" : ""}</p>;
-                })
-              }
-            </div>
-          </div>
-
-          {/* Tendencia de ahorro */}
-          <div style={{ ...S.insC, borderLeft: "4px solid #3b82f6", marginBottom: 12 }}>
-            <span style={{ fontSize: 22 }}>📈</span>
-            <div style={{ fontSize: 14, color: "#cbd5e1", lineHeight: 1.7 }}>
-              <p style={{ fontWeight: 700, color: "#e2e8f0", marginBottom: 6 }}>Tendencia de ahorro</p>
-              {trend.filter(t => t.count > 0).length <= 1 ? <p>Cargá más de un mes para ver la tendencia.</p> :
-                trend.filter(t => t.count > 0).map((t, i) => (
-                  <p key={t.month}>{t.month}: Balance <strong style={{ color: t.bal >= 0 ? "#10b981" : "#f87171" }}>{fmt(t.bal)}</strong> (Ing: {fmt(t.ingTotal)} · Eg: {fmt(t.egTotal)})</p>
-                ))
-              }
-              {trend.filter(t => t.count > 0).length > 1 && (() => {
-                const curr = trend[0]?.bal || 0;
-                const prev = trend[1]?.bal || 0;
-                const diff = curr - prev;
-                return diff > 0
-                  ? <p style={{ color: "#10b981", marginTop: 6 }}>📈 Mejoraste {fmt(diff)} respecto al mes anterior. ¡Seguí así!</p>
-                  : diff < 0 ? <p style={{ color: "#f87171", marginTop: 6 }}>📉 Tu balance bajó {fmt(Math.abs(diff))} respecto al mes anterior.</p>
-                  : null;
-              })()}
-            </div>
-          </div>
-
-          {/* Calculadora */}
-          <div style={S.calcC}>
-            <h4 style={{ fontSize: 16, fontWeight: 700, color: "#f1f5f9", marginBottom: 4 }}>💱 Resumen de patrimonio</h4>
-            <p style={{ fontSize: 13, color: "#64748b", marginBottom: 16 }}>Dólar {selectedRate} — ${(rate ?? 0).toLocaleString("es-AR")}</p>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              {[["Saldo ARS", fmt(currentARS), "#e2e8f0"], ["Saldo USD", fmt(currentUSD, "USD"), "#3b82f6"], ["Balance del mes", fmt(balTotalARS), balTotalARS >= 0 ? "#10b981" : "#f87171"], ["Patrimonio total ARS", fmt(currentARS + currentUSD * rate), "#f1f5f9"]].map(([l, v, c]) => (
-                <div key={l} style={S.calcI}><span style={{ fontSize: 11, color: "#64748b", textTransform: "uppercase", letterSpacing: .3 }}>{l}</span><span style={{ fontSize: 18, fontWeight: 700, color: c, fontFamily: "'Fraunces',serif" }}>{v}</span></div>
-              ))}
-            </div>
-          </div>
-        </div>
-        );
-      })()}
-
-      {/* === SEMANAL === */}
-      {view === "weekly" && (() => {
-        const today = new Date();
-        const dayOfWeek = today.getDay() === 0 ? 6 : today.getDay() - 1; // lunes=0
-        const weekStart = new Date(today); weekStart.setDate(today.getDate() - dayOfWeek); weekStart.setHours(0,0,0,0);
-        const weekEnd = new Date(weekStart); weekEnd.setDate(weekStart.getDate() + 6); weekEnd.setHours(23,59,59,999);
-        const prevWeekStart = new Date(weekStart); prevWeekStart.setDate(weekStart.getDate() - 7);
-        const prevWeekEnd = new Date(weekStart); prevWeekEnd.setDate(weekStart.getDate() - 1);
-
-        const weekTxs = txs.filter(t => { const d = new Date(t.date + "T12:00:00"); return d >= weekStart && d <= weekEnd; });
-        const prevWeekTxs = txs.filter(t => { const d = new Date(t.date + "T12:00:00"); return d >= prevWeekStart && d <= prevWeekEnd; });
-
-        const wEgARS = weekTxs.filter(t => t.type === "egreso" && t.currency === "ARS").reduce((s,t) => s+t.amount, 0);
-        const wIngARS = weekTxs.filter(t => t.type === "ingreso" && t.currency === "ARS").reduce((s,t) => s+t.amount, 0);
-        const wEgUSD = weekTxs.filter(t => t.type === "egreso" && t.currency === "USD").reduce((s,t) => s+t.amount, 0);
-        const wIngUSD = weekTxs.filter(t => t.type === "ingreso" && t.currency === "USD").reduce((s,t) => s+t.amount, 0);
-        const pwEgARS = prevWeekTxs.filter(t => t.type === "egreso" && t.currency === "ARS").reduce((s,t) => s+t.amount, 0);
-
-        const DAYS = ["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"];
-        const dayTotals = DAYS.map((d, i) => {
-          const dayDate = new Date(weekStart); dayDate.setDate(weekStart.getDate() + i);
-          const dayTxs = weekTxs.filter(t => { const td = new Date(t.date + "T12:00:00"); return td.toDateString() === dayDate.toDateString(); });
-          return { day: d, date: dayDate, eg: dayTxs.filter(t=>t.type==="egreso"&&t.currency==="ARS").reduce((s,t)=>s+t.amount,0), ing: dayTxs.filter(t=>t.type==="ingreso"&&t.currency==="ARS").reduce((s,t)=>s+t.amount,0), count: dayTxs.length };
-        });
-        const maxDay = Math.max(...dayTotals.map(d => Math.max(d.eg, d.ing, 1)));
-
-        const catTotals = CAT_EG.map(c => ({ c, total: weekTxs.filter(t=>t.type==="egreso"&&t.category===c&&t.currency==="ARS").reduce((s,t)=>s+t.amount,0) })).filter(x=>x.total>0).sort((a,b)=>b.total-a.total);
-        const diffVsPrev = wEgARS - pwEgARS;
-
-        const fmtDate = d => d.toLocaleDateString("es-AR", { day: "numeric", month: "short" });
-
-        return (
-          <div style={{ animation: "fadeIn .4s" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-              <h3 style={S.secT}>📅 Semana actual</h3>
-              <span style={{ fontSize: 12, color: "#64748b" }}>{fmtDate(weekStart)} — {fmtDate(weekEnd)}</span>
+        {/* VISTA GENERAL */}
+        {view === "general" && (
+          <div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: 8 }}>
+              <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>
+                General — {MONTHS[month]} {year}
+              </h2>
+              <button onClick={exportResumen} style={{
+                padding: "8px 18px", borderRadius: 8, fontSize: 13, fontWeight: 700,
+                background: copied ? "rgba(52,211,153,0.2)" : "linear-gradient(135deg, rgba(37,99,235,0.25), rgba(124,58,237,0.25))",
+                border: copied ? "1px solid #34d39955" : "1px solid rgba(96,165,250,0.3)",
+                color: copied ? "#34d399" : "#60a5fa",
+                cursor: "pointer", fontFamily: "'DM Sans', sans-serif",
+                transition: "all 0.3s",
+              }}>
+                {copied ? "✓ Copiado al portapapeles" : "📋 Exportar resumen"}
+              </button>
             </div>
 
-            {/* Cards resumen */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 10, marginBottom: 20 }}>
-              <div style={{ ...S.mCard, borderLeft: "4px solid #b91c1c" }}>
-                <span style={S.mLbl}>Gastos semana</span>
-                <span style={{ ...S.mVal, color: "#f87171" }}>{fmt(wEgARS)}</span>
-                {pwEgARS > 0 && <span style={{ fontSize: 12, color: diffVsPrev <= 0 ? "#10b981" : "#f87171" }}>{diffVsPrev <= 0 ? "▼" : "▲"} {fmt(Math.abs(diffVsPrev))} vs sem. ant.</span>}
-              </div>
-              <div style={{ ...S.mCard, borderLeft: "4px solid #0f5132" }}>
-                <span style={S.mLbl}>Ingresos semana</span>
-                <span style={{ ...S.mVal, color: "#10b981" }}>{fmt(wIngARS)}</span>
-                {wIngUSD > 0 && <span style={{ fontSize: 12, color: "#60a5fa" }}>{fmt(wIngUSD, "USD")}</span>}
-              </div>
-              <div style={{ ...S.mCard, borderLeft: `4px solid ${wIngARS-wEgARS >= 0 ? "#0f5132" : "#b91c1c"}` }}>
-                <span style={S.mLbl}>Balance semana</span>
-                <span style={{ ...S.mVal, color: wIngARS-wEgARS >= 0 ? "#10b981" : "#f87171" }}>{fmt(wIngARS-wEgARS)}</span>
-                <span style={{ fontSize: 12, color: "#64748b" }}>{weekTxs.length} movimientos</span>
-              </div>
-              {wEgUSD > 0 && (
-                <div style={{ ...S.mCard, borderLeft: "4px solid #1d4ed8" }}>
-                  <span style={S.mLbl}>Gastos USD</span>
-                  <span style={{ ...S.mVal, color: "#60a5fa" }}>{fmt(wEgUSD, "USD")}</span>
-                </div>
-              )}
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 13 }}>
+                <thead>
+                  <tr>
+                    <th style={thStyle}>Kine</th>
+                    <th style={thStyle}>Disp. Mes</th>
+                    <th style={thStyle}>Disp. Kine</th>
+                    <th style={thStyle}>Dados</th>
+                    <th style={thStyle}>Asistidos</th>
+                    <th style={thStyle}>Cancelados</th>
+                    <th style={thStyle}>% Asist.</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {KINES.map(k => {
+                    const t = getMonthTotals(k.id, month);
+                    return (
+                      <tr key={k.id}>
+                        <td style={{ ...labelStyle, color: k.color }}>{k.name}</td>
+                        <td style={monoCell}>{t.disponiblesMes}</td>
+                        <td style={monoCell}>{t.disponiblesKine}</td>
+                        <td style={monoCell}>{t.dados}</td>
+                        <td style={{ ...monoCell, color: "#34d399" }}>{t.asistidos}</td>
+                        <td style={{ ...monoCell, color: "#f87171" }}>{t.cancelados}</td>
+                        <td style={{ ...monoCell, color: "#facc15" }}>{pct(t.asistidos, t.dados)}</td>
+                      </tr>
+                    );
+                  })}
+                  {(() => {
+                    const g = getGeneralMonth(month);
+                    return (
+                      <tr style={{ borderTop: "2px solid #334155" }}>
+                        <td style={{ ...labelStyle, fontWeight: 700, color: "#e2e8f0" }}>TOTAL</td>
+                        <td style={{ ...monoCell, fontWeight: 700 }}>{g.disponiblesMes}</td>
+                        <td style={{ ...monoCell, fontWeight: 700 }}>{g.disponiblesKine}</td>
+                        <td style={{ ...monoCell, fontWeight: 700 }}>{g.dados}</td>
+                        <td style={{ ...monoCell, fontWeight: 700, color: "#34d399" }}>{g.asistidos}</td>
+                        <td style={{ ...monoCell, fontWeight: 700, color: "#f87171" }}>{g.cancelados}</td>
+                        <td style={{ ...monoCell, fontWeight: 700, color: "#facc15" }}>{pct(g.asistidos, g.dados)}</td>
+                      </tr>
+                    );
+                  })()}
+                </tbody>
+              </table>
             </div>
 
-            {/* Barras por día */}
-            <div style={{ ...S.chBox, marginBottom: 20 }}>
-              <p style={{ fontSize: 13, fontWeight: 600, color: "#94a3b8", marginBottom: 12 }}>Gastos e ingresos por día</p>
-              <div style={{ display: "flex", gap: 8, alignItems: "flex-end", height: 100 }}>
-                {dayTotals.map((d, i) => (
-                  <div key={d.day} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-                    <div style={{ display: "flex", gap: 2, alignItems: "flex-end", height: 80, width: "100%" }}>
-                      <div style={{ flex: 1, background: "linear-gradient(180deg,#0f5132,#34d399)", borderRadius: "3px 3px 0 0", height: `${maxDay ? (d.ing/maxDay)*100 : 0}%`, minHeight: d.ing > 0 ? 3 : 0, transition: "height .5s" }} />
-                      <div style={{ flex: 1, background: "linear-gradient(180deg,#b91c1c,#fca5a5)", borderRadius: "3px 3px 0 0", height: `${maxDay ? (d.eg/maxDay)*100 : 0}%`, minHeight: d.eg > 0 ? 3 : 0, transition: "height .5s" }} />
-                    </div>
-                    <span style={{ fontSize: 10, color: d.date.toDateString() === today.toDateString() ? "#10b981" : "#64748b", fontWeight: d.date.toDateString() === today.toDateString() ? 700 : 400 }}>{d.day}</span>
+            {(replacements[month] || []).length > 0 && (
+              <div style={{
+                marginTop: 20, padding: 16, borderRadius: 12,
+                background: "rgba(251,191,36,0.05)", border: "1px solid rgba(251,191,36,0.15)",
+              }}>
+                <h3 style={{ margin: "0 0 8px", fontSize: 14, fontWeight: 700, color: "#fbbf24" }}>Reemplazos</h3>
+                {replacements[month].map((r, i) => (
+                  <div key={i} style={{ display: "flex", gap: 12, fontSize: 13, marginBottom: 4 }}>
+                    <span style={{ fontWeight: 600 }}>{r.name}</span>
+                    {r.reemplaza && <span style={{ color: "#94a3b8" }}>→ {r.reemplaza}</span>}
+                    <span style={{ fontFamily: "'Space Mono', monospace", color: "#fbbf24" }}>{r.hours}hs</span>
                   </div>
                 ))}
+                <div style={{
+                  marginTop: 8, paddingTop: 8, borderTop: "1px solid rgba(251,191,36,0.2)",
+                  fontSize: 13, fontWeight: 700,
+                }}>
+                  Total reemplazos: <span style={{ fontFamily: "'Space Mono', monospace", color: "#fbbf24" }}>
+                    {replacements[month].reduce((s, r) => s + r.hours, 0)}hs
+                  </span>
+                </div>
               </div>
+            )}
+          </div>
+        )}
+
+        {/* VISTA ANUAL */}
+        {view === "anual" && (
+          <div>
+            <h2 style={{ margin: "0 0 16px", fontSize: 18, fontWeight: 700 }}>
+              Resumen Anual — {year}
+            </h2>
+
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 12 }}>
+                <thead>
+                  <tr>
+                    <th style={thStyle}>Mes</th>
+                    <th style={thStyle}>Disp. Mes</th>
+                    <th style={thStyle}>Disp. Kine</th>
+                    <th style={thStyle}>Dados</th>
+                    <th style={thStyle}>Asistidos</th>
+                    <th style={thStyle}>Cancel.</th>
+                    <th style={thStyle}>% Asist.</th>
+                    <th style={thStyle}>Reempl.</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {MONTHS.map((m, mi) => {
+                    const g = getGeneralMonth(mi);
+                    const replH = (replacements[mi] || []).reduce((s, r) => s + r.hours, 0);
+                    const hasData = g.disponiblesMes > 0 || g.dados > 0;
+                    return (
+                      <tr key={mi} style={{ opacity: hasData ? 1 : 0.3 }}>
+                        <td style={{ ...labelStyle, cursor: "pointer" }} onClick={() => { setMonth(mi); setView("general"); }}>
+                          {m}
+                        </td>
+                        <td style={monoCell}>{g.disponiblesMes}</td>
+                        <td style={monoCell}>{g.disponiblesKine}</td>
+                        <td style={monoCell}>{g.dados}</td>
+                        <td style={{ ...monoCell, color: "#34d399" }}>{g.asistidos}</td>
+                        <td style={{ ...monoCell, color: "#f87171" }}>{g.cancelados}</td>
+                        <td style={{ ...monoCell, color: "#facc15" }}>{pct(g.asistidos, g.dados)}</td>
+                        <td style={{ ...monoCell, color: "#fbbf24" }}>{replH > 0 ? `${replH}hs` : "—"}</td>
+                      </tr>
+                    );
+                  })}
+                  {(() => {
+                    const totals = { dm: 0, dk: 0, d: 0, a: 0, c: 0, r: 0 };
+                    MONTHS.forEach((_, mi) => {
+                      const g = getGeneralMonth(mi);
+                      totals.dm += g.disponiblesMes;
+                      totals.dk += g.disponiblesKine;
+                      totals.d += g.dados;
+                      totals.a += g.asistidos;
+                      totals.c += g.cancelados;
+                      totals.r += (replacements[mi] || []).reduce((s, r) => s + r.hours, 0);
+                    });
+                    return (
+                      <tr style={{ borderTop: "2px solid #334155" }}>
+                        <td style={{ ...labelStyle, fontWeight: 700 }}>TOTAL ANUAL</td>
+                        <td style={{ ...monoCell, fontWeight: 700 }}>{totals.dm}</td>
+                        <td style={{ ...monoCell, fontWeight: 700 }}>{totals.dk}</td>
+                        <td style={{ ...monoCell, fontWeight: 700 }}>{totals.d}</td>
+                        <td style={{ ...monoCell, fontWeight: 700, color: "#34d399" }}>{totals.a}</td>
+                        <td style={{ ...monoCell, fontWeight: 700, color: "#f87171" }}>{totals.c}</td>
+                        <td style={{ ...monoCell, fontWeight: 700, color: "#facc15" }}>{pct(totals.a, totals.d)}</td>
+                        <td style={{ ...monoCell, fontWeight: 700, color: "#fbbf24" }}>{totals.r > 0 ? `${totals.r}hs` : "—"}</td>
+                      </tr>
+                    );
+                  })()}
+                </tbody>
+              </table>
             </div>
 
-            {/* Gastos por categoría esta semana */}
-            {catTotals.length > 0 && (
-              <div style={{ background: "#1e293b", borderRadius: 16, padding: 18, marginBottom: 16 }}>
-                <p style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0", marginBottom: 14 }}>Gastos por categoría</p>
-                {catTotals.map(ct => {
-                  const pct = wEgARS > 0 ? Math.round((ct.total / wEgARS) * 100) : 0;
+            {/* Mini chart */}
+            <div style={{ marginTop: 24 }}>
+              <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>Evolución mensual</h3>
+              <div style={{ display: "flex", alignItems: "flex-end", gap: 4, height: 120 }}>
+                {MONTHS.map((m, mi) => {
+                  const g = getGeneralMonth(mi);
+                  const maxAll = Math.max(...MONTHS.map((_, i) => getGeneralMonth(i).asistidos), 1);
+                  const h = (g.asistidos / maxAll) * 100;
                   return (
-                    <div key={ct.c} style={{ marginBottom: 10 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                        <span style={{ fontSize: 13, color: "#94a3b8" }}>{ct.c}</span>
-                        <span style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0" }}>{fmt(ct.total)} <span style={{ color: "#64748b", fontWeight: 400 }}>({pct}%)</span></span>
-                      </div>
-                      <div style={S.barBg}><div style={{ height: "100%", borderRadius: 3, width: `${pct}%`, background: "linear-gradient(90deg,#b91c1c,#f87171)", transition: "width .5s" }} /></div>
+                    <div key={mi} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                      <span style={{ fontSize: 9, fontFamily: "'Space Mono', monospace", color: "#64748b" }}>
+                        {g.asistidos > 0 ? g.asistidos : ""}
+                      </span>
+                      <div style={{
+                        width: "100%", maxWidth: 32,
+                        height: `${Math.max(h, 2)}%`,
+                        background: g.asistidos > 0 ? "linear-gradient(180deg, #2563eb, #7c3aed)" : "rgba(51,65,85,0.3)",
+                        borderRadius: "4px 4px 0 0",
+                        transition: "height 0.5s ease",
+                        cursor: "pointer",
+                      }} onClick={() => { setMonth(mi); setView("general"); }} />
+                      <span style={{ fontSize: 9, color: "#64748b" }}>{m.slice(0, 3)}</span>
                     </div>
                   );
                 })}
               </div>
-            )}
-
-            {/* Movimientos de la semana */}
-            <h4 style={{ fontSize: 14, fontWeight: 700, color: "#f1f5f9", marginBottom: 10 }}>Movimientos de la semana</h4>
-            {weekTxs.length === 0
-              ? <p style={S.emp}>Sin movimientos esta semana</p>
-              : weekTxs.sort((a,b) => b.date.localeCompare(a.date)).map((tx, i) => (
-                <div key={tx.id} style={{ ...S.txC, animation: `slideUp .2s ease ${i*.03}s both` }}>
-                  <div style={S.tL}>
-                    <div style={{ ...S.dot, background: tx.type === "ingreso" ? "#0f5132" : "#b91c1c" }} />
-                    <div>
-                      <div style={S.tD}>{tx.description}</div>
-                      <div style={S.tM}>{tx.category} · {tx.date}</div>
-                    </div>
-                  </div>
-                  <span style={{ ...S.tA, color: tx.type === "ingreso" ? "#10b981" : "#f87171" }}>{tx.type === "ingreso" ? "+" : "-"}{fmt(tx.amount, tx.currency)}</span>
-                </div>
-              ))
-            }
-          </div>
-        );
-      })()}
-
-      {/* === ECONOMÍA === */}
-      {view === "advisor" && (
-        <div style={{ animation: "fadeIn .4s" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-            <h3 style={S.secT}>📊 Economía Argentina</h3>
-            <button style={S.refreshBtn} onClick={fetchEcoData} title="Actualizar">↻</button>
-          </div>
-          <p style={{ fontSize: 13, color: "#64748b", marginBottom: 20 }}>
-            {ecoData.loading ? "Cargando datos..." : ecoData.error ? "Error al cargar datos" : `Actualizado ${ecoData.lastUpdate}`}
-          </p>
-
-          {/* Cards principales */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10, marginBottom: 20 }}>
-            {/* Inflación último mes */}
-            {(() => {
-              const last = ecoData.inflacion[0];
-              const prev = ecoData.inflacion[1];
-              const diff = last && prev ? (last.valor - prev.valor).toFixed(1) : null;
-              return (
-                <div style={{ ...S.mCard, borderLeft: "4px solid #f59e0b" }}>
-                  <span style={S.mLbl}>📈 Inflación mensual</span>
-                  <span style={{ ...S.mVal, color: "#fbbf24" }}>{last ? `${last.valor}%` : "--"}</span>
-                  <span style={{ fontSize: 12, color: "#64748b" }}>{last ? new Date(last.fecha + "T12:00:00").toLocaleDateString("es-AR", { month: "long", year: "numeric" }) : ""}</span>
-                  {diff !== null && <span style={{ fontSize: 12, color: parseFloat(diff) <= 0 ? "#10b981" : "#f87171" }}>{parseFloat(diff) <= 0 ? "▼" : "▲"} {Math.abs(diff)}% vs mes ant.</span>}
-                </div>
-              );
-            })()}
-
-            {/* Inflación interanual */}
-            {(() => {
-              const ipc = ecoData.ipc;
-              return (
-                <div style={{ ...S.mCard, borderLeft: "4px solid #ef4444" }}>
-                  <span style={S.mLbl}>📉 Inflación interanual</span>
-                  <span style={{ ...S.mVal, color: "#f87171" }}>{ipc ? `${ipc.valor}%` : "--"}</span>
-                  <span style={{ fontSize: 12, color: "#64748b" }}>{ipc ? new Date(ipc.fecha + "T12:00:00").toLocaleDateString("es-AR", { month: "long", year: "numeric" }) : ""}</span>
-                  <span style={{ fontSize: 12, color: "#64748b" }}>Var. anual IPC</span>
-                </div>
-              );
-            })()}
-
-            {/* Riesgo País */}
-            {(() => {
-              const rp = ecoData.riesgoPais;
-              const nivel = rp ? (rp.valor < 800 ? { label: "Bajo", color: "#10b981" } : rp.valor < 1500 ? { label: "Moderado", color: "#f59e0b" } : { label: "Alto", color: "#f87171" }) : null;
-              return (
-                <div style={{ ...S.mCard, borderLeft: `4px solid ${nivel?.color || "#334155"}` }}>
-                  <span style={S.mLbl}>🌐 Riesgo País</span>
-                  <span style={{ ...S.mVal, color: nivel?.color || "#e2e8f0" }}>{rp ? rp.valor.toLocaleString("es-AR") : "--"}</span>
-                  <span style={{ fontSize: 12, color: "#64748b" }}>{rp ? new Date(rp.fecha + "T12:00:00").toLocaleDateString("es-AR", { month: "long", year: "numeric" }) : ""}</span>
-                  {nivel && <span style={{ fontSize: 12, color: nivel.color }}>{nivel.label}</span>}
-                </div>
-              );
-            })()}
-          </div>
-
-          {/* Tabla inflación últimos 12 meses */}
-          <h4 style={{ fontSize: 14, fontWeight: 700, color: "#f1f5f9", marginBottom: 12 }}>Inflación mensual — últimos 12 meses</h4>
-          {ecoData.loading ? (
-            <p style={S.emp}>Cargando...</p>
-          ) : ecoData.inflacion.length === 0 ? (
-            <p style={S.emp}>Sin datos disponibles</p>
-          ) : (
-            <div style={{ background: "#1e293b", borderRadius: 14, overflow: "hidden", marginBottom: 20 }}>
-              {ecoData.inflacion.map((item, i) => {
-                const prev = ecoData.inflacion[i + 1];
-                const diff = prev ? item.valor - prev.valor : null;
-                const maxVal = Math.max(...ecoData.inflacion.map(x => x.valor));
-                return (
-                  <div key={item.fecha} style={{ display: "flex", alignItems: "center", padding: "10px 16px", borderBottom: i < ecoData.inflacion.length - 1 ? "1px solid #334155" : "none", gap: 12 }}>
-                    <span style={{ fontSize: 13, color: "#94a3b8", minWidth: 110 }}>
-                      {new Date(item.fecha + "T12:00:00").toLocaleDateString("es-AR", { month: "long", year: "numeric" })}
-                    </span>
-                    <div style={{ flex: 1, height: 6, background: "#0f172a", borderRadius: 3, overflow: "hidden" }}>
-                      <div style={{ height: "100%", width: `${(item.valor / maxVal) * 100}%`, background: item.valor > 10 ? "linear-gradient(90deg,#b91c1c,#f87171)" : "linear-gradient(90deg,#0f5132,#10b981)", borderRadius: 3, transition: "width .5s" }} />
-                    </div>
-                    <span style={{ fontSize: 14, fontWeight: 700, color: item.valor > 10 ? "#f87171" : "#10b981", minWidth: 50, textAlign: "right" }}>{item.valor}%</span>
-                    {diff !== null && (
-                      <span style={{ fontSize: 11, color: diff <= 0 ? "#10b981" : "#f87171", minWidth: 55, textAlign: "right" }}>
-                        {diff <= 0 ? "▼" : "▲"} {Math.abs(diff).toFixed(1)}%
-                      </span>
-                    )}
-                  </div>
-                );
-              })}
             </div>
-          )}
-
-          {/* Impacto en tu bolsillo */}
-          {ecoData.inflacion[0] && (
-            <div style={{ ...S.insC, borderLeft: "4px solid #f59e0b", marginBottom: 12 }}>
-              <span style={{ fontSize: 22 }}>💰</span>
-              <div style={{ fontSize: 14, color: "#cbd5e1", lineHeight: 1.8 }}>
-                <p style={{ fontWeight: 700, color: "#e2e8f0", marginBottom: 6 }}>¿Cómo te afecta?</p>
-                <p>Con una inflación de <strong style={{ color: "#fbbf24" }}>{ecoData.inflacion[0].valor}%</strong> mensual, tus pesos pierden poder adquisitivo cada mes.</p>
-                {currentARS > 0 && <p>Tus <strong>{fmt(currentARS)}</strong> en pesos pierden aproximadamente <strong style={{ color: "#f87171" }}>{fmt(currentARS * ecoData.inflacion[0].valor / 100)}</strong> de valor real este mes si no los invertís.</p>}
-                <p style={{ color: "#94a3b8", fontSize: 12, marginTop: 4 }}>💡 Invertir en instrumentos que ajusten por CER o comprar dólares son formas de cubrirte.</p>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Form Modal */}
-      {showForm && (<div style={S.ov} onClick={() => setShowForm(false)}><div style={{ ...S.mod, animation: "popIn .3s" }} onClick={e => e.stopPropagation()}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
-          <h2 style={S.modT}>{editId ? "Editar" : "Nuevo"} {formType === "ingreso" ? "Ingreso" : "Egreso"}</h2>
-          <span style={{ fontSize: 13, color: "#94a3b8", background: "#0f172a", padding: "4px 12px", borderRadius: 20 }}>{formCur === "USD" ? "🇺🇸 USD" : "🇦🇷 ARS"}</span>
-        </div>
-        <div style={S.curTog}>
-          <button style={{ ...S.curB, ...(formCur === "ARS" ? S.curBA : {}) }} onClick={() => setFormCur("ARS")}>$ Pesos</button>
-          <button style={{ ...S.curB, ...(formCur === "USD" ? S.curBU : {}) }} onClick={() => setFormCur("USD")}>US$ Dólares</button>
-        </div>
-        <div style={{ marginBottom: 14 }}><label style={S.fLbl}>Descripción</label><input style={S.fIn} placeholder="Ej: Sueldo mensual" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} /></div>
-        <div style={{ marginBottom: 14 }}><label style={S.fLbl}>Monto ({formCur === "USD" ? "US$" : "$"})</label><input style={S.fIn} type="number" min="0" step="0.01" placeholder="0.00" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} /></div>
-        <div style={{ display: "flex", gap: 10 }}>
-          <div style={{ flex: 1, marginBottom: 14 }}><label style={S.fLbl}>Categoría</label><select style={S.fIn} value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}>{(formType === "ingreso" ? CAT_ING : CAT_EG).map(c => <option key={c}>{c}</option>)}</select></div>
-            <div style={{ flex: 1, marginBottom: 14 }}><label style={S.fLbl}>Tipo</label><select style={S.fIn} value={form.tipoIngreso} onChange={e => setForm({ ...form, tipoIngreso: e.target.value })}><option value="Fijo">Fijo</option><option value="Variable">Variable</option></select></div>
-          )}
-        </div>
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8 }}>
-          <button style={S.canBtn} onClick={() => setShowForm(false)}>Cancelar</button>
-          <button style={formType === "ingreso" ? S.bG : S.bR} onClick={handleSave}>{editId ? "Guardar" : "Agregar"}</button>
-        </div>
-      </div></div>)}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
-const S = {
-  root: { fontFamily: "'Outfit',sans-serif", background: "#0c0f14", minHeight: "100vh", padding: "20px 16px 48px", maxWidth: 920, margin: "0 auto", color: "#e2e8f0" },
-  topBar: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 },
-  logoWrap: { display: "flex", alignItems: "center", gap: 8 },
-  logoIcon: { fontSize: 28, color: "#10b981", fontWeight: 300 },
-  logoText: { fontFamily: "'Fraunces',serif", fontSize: 24, fontWeight: 700, color: "#f1f5f9", letterSpacing: -.5 },
-  topRight: { display: "flex", alignItems: "center", gap: 8 },
-  yearSel: { padding: "10px 14px", border: "1px solid #334155", borderRadius: 12, background: "#1e293b", fontSize: 14, fontWeight: 500, color: "#e2e8f0", cursor: "pointer" },
+// Styles
+const thStyle = {
+  textAlign: "left",
+  padding: "10px 12px",
+  fontSize: 11,
+  fontWeight: 700,
+  color: "#64748b",
+  textTransform: "uppercase",
+  letterSpacing: "0.05em",
+  borderBottom: "1px solid rgba(148,163,184,0.1)",
+  fontFamily: "'Space Mono', monospace",
+  whiteSpace: "nowrap",
+};
 
-  // Rates bar
-  ratesBar: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, flexWrap: "wrap", gap: 8 },
-  ratesLeft: { display: "flex", gap: 6 },
-  rateChip: { display: "flex", flexDirection: "column", alignItems: "center", padding: "8px 16px", background: "#1e293b", border: "1px solid #334155", borderRadius: 12, cursor: "pointer", transition: "all .2s", minWidth: 90 },
-  rateChipActive: { background: "#0f5132", borderColor: "#10b981", boxShadow: "0 0 12px rgba(16,185,129,0.2)" },
-  rateChipLabel: { fontSize: 10, color: "#94a3b8", fontWeight: 600, textTransform: "uppercase", letterSpacing: .5 },
-  rateChipVal: { fontSize: 16, fontWeight: 700, color: "#10b981", marginTop: 2 },
-  ratesRight: { display: "flex", alignItems: "center" },
-  ratesStatus: { fontSize: 11, color: "#64748b", display: "flex", alignItems: "center", gap: 6 },
-  refreshBtn: { background: "none", border: "none", color: "#10b981", fontSize: 16, cursor: "pointer", padding: "2px 4px" },
-  rateDetail: { display: "flex", alignItems: "center", gap: 10, marginBottom: 16, padding: "10px 16px", background: "#1e293b", borderRadius: 10, fontSize: 13, color: "#94a3b8" },
-  rateDetailItem: { color: "#cbd5e1" },
-  rateDetailDiv: { color: "#334155" },
-  rateDetailTag: { marginLeft: "auto", background: "#0f172a", padding: "3px 10px", borderRadius: 8, fontSize: 11, fontWeight: 600, color: "#10b981" },
+const labelStyle = {
+  padding: "10px 12px",
+  fontSize: 13,
+  fontWeight: 600,
+  color: "#cbd5e1",
+  borderBottom: "1px solid rgba(148,163,184,0.05)",
+  whiteSpace: "nowrap",
+};
 
-  monthRow: { display: "flex", gap: 4, marginBottom: 16, overflowX: "auto", paddingBottom: 4 },
-  mp: { padding: "7px 13px", border: "none", borderRadius: 20, background: "transparent", cursor: "pointer", fontSize: 13, fontWeight: 500, color: "#64748b", flexShrink: 0 },
-  mpA: { background: "#0f5132", color: "#fff", fontWeight: 600 },
-  nav: { display: "flex", gap: 2, marginBottom: 20, background: "#1e293b", borderRadius: 14, padding: 3 },
-  nb: { flex: 1, padding: "10px 6px", border: "none", borderRadius: 12, background: "transparent", cursor: "pointer", fontSize: 13, fontWeight: 500, color: "#64748b" },
-  nbA: { background: "#0f5132", color: "#fff", fontWeight: 600 },
+const cellStyle = {
+  padding: "6px 8px",
+  borderBottom: "1px solid rgba(148,163,184,0.05)",
+  textAlign: "center",
+};
 
-  // Patrimonio
-  patRow: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 },
-  patCardARS: { background: "linear-gradient(135deg,#0f5132,#065f46,#064e3b)", borderRadius: 20, padding: "26px 24px", display: "flex", flexDirection: "column", gap: 4 },
-  patCardUSD: { background: "linear-gradient(135deg,#1e3a5f,#1d4ed8,#1e40af)", borderRadius: 20, padding: "26px 24px", display: "flex", flexDirection: "column", gap: 4 },
-  patLbl: { fontSize: 11, color: "#86efac", textTransform: "uppercase", letterSpacing: 1, fontWeight: 600 },
-  patLblUSD: { fontSize: 11, color: "#93c5fd", textTransform: "uppercase", letterSpacing: 1, fontWeight: 600 },
-  patVal: { fontSize: 28, fontWeight: 800, color: "#fff", fontFamily: "'Fraunces',serif", letterSpacing: -1, margin: "4px 0" },
-  patValUSD: { fontSize: 28, fontWeight: 800, color: "#fff", fontFamily: "'Fraunces',serif", letterSpacing: -1, margin: "4px 0" },
-  patSub2: { fontSize: 13, color: "#bbf7d0", fontWeight: 500 },
-  patSub2USD: { fontSize: 13, color: "#bfdbfe", fontWeight: 500 },
+const monoCell = {
+  ...cellStyle,
+  fontFamily: "'Space Mono', monospace",
+  fontSize: 13,
+  color: "#e2e8f0",
+};
 
-  cards3: { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(170px,1fr))", gap: 10, marginBottom: 16 },
-  mCard: { background: "#1e293b", borderRadius: 16, padding: "18px 16px", display: "flex", flexDirection: "column", gap: 5 },
-  mLbl: { fontSize: 11, color: "#64748b", textTransform: "uppercase", letterSpacing: .5, fontWeight: 600 },
-  mVal: { fontSize: 22, fontWeight: 700, fontFamily: "'Fraunces',serif" },
-  mSub: { display: "flex", gap: 10, fontSize: 12, color: "#94a3b8" },
-  qRow: { display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" },
-  bG: { padding: "10px 18px", border: "none", borderRadius: 12, background: "#0f5132", color: "#fff", fontWeight: 600, cursor: "pointer", fontSize: 13 },
-  bGo: { padding: "10px 18px", border: "1px solid #0f5132", borderRadius: 12, background: "transparent", color: "#10b981", fontWeight: 600, cursor: "pointer", fontSize: 13 },
-  bR: { padding: "10px 18px", border: "none", borderRadius: 12, background: "#991b1b", color: "#fff", fontWeight: 600, cursor: "pointer", fontSize: 13 },
-  bRo: { padding: "10px 18px", border: "1px solid #991b1b", borderRadius: 12, background: "transparent", color: "#f87171", fontWeight: 600, cursor: "pointer", fontSize: 13 },
-  bkRow: { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(260px,1fr))", gap: 10, marginBottom: 20 },
-  bkCard: { background: "#1e293b", borderRadius: 16, padding: 18 },
-  bkT: { fontSize: 14, fontWeight: 600, color: "#e2e8f0", marginBottom: 14 },
-  barBg: { height: 5, background: "#334155", borderRadius: 3, overflow: "hidden" },
-  emp: { color: "#475569", fontSize: 14, padding: "16px 0", textAlign: "center" },
-  secT: { fontSize: 16, fontWeight: 700, color: "#f1f5f9", marginBottom: 10 },
-  tR: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "13px 0", borderBottom: "1px solid #1e293b" },
-  txC: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 16px", borderRadius: 14, marginBottom: 6, background: "#1e293b", border: "1px solid #334155" },
-  tL: { display: "flex", alignItems: "center", gap: 12 },
-  dot: { width: 10, height: 10, borderRadius: "50%", flexShrink: 0 },
-  tD: { fontSize: 14, fontWeight: 500, color: "#e2e8f0" },
-  tM: { fontSize: 11, color: "#64748b", marginTop: 2 },
-  tA: { fontSize: 15, fontWeight: 700 },
-  eBtn: { width: 30, height: 30, border: "none", borderRadius: 8, background: "#334155", cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center", color: "#94a3b8" },
-  dBtn: { width: 30, height: 30, border: "none", borderRadius: 8, background: "#450a0a", cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center", color: "#f87171" },
-  chBox: { background: "#1e293b", borderRadius: 16, padding: "20px 16px 14px", marginBottom: 20 },
-  chInner: { display: "flex", gap: 6, alignItems: "flex-end", height: 160, marginBottom: 10 },
-  chCol: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, cursor: "pointer" },
-  chBars: { display: "flex", gap: 2, alignItems: "flex-end", height: "100%", width: "100%" },
-  chBar: { flex: 1, borderRadius: "3px 3px 0 0", minHeight: 2, transition: "height .5s" },
-  lgI: { display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "#64748b" },
-  lgD: { width: 7, height: 7, borderRadius: "50%", display: "inline-block" },
-  tblW: { overflowX: "auto", background: "#1e293b", borderRadius: 16 },
-  tbl: { width: "100%", borderCollapse: "collapse", fontSize: 13, color: "#e2e8f0" },
-  th: { padding: "12px 14px", textAlign: "left", fontWeight: 600, color: "#64748b", fontSize: 11, textTransform: "uppercase", letterSpacing: .5, borderBottom: "1px solid #334155" },
-  td: { padding: "11px 14px", borderBottom: "1px solid #1e293b66" },
-  insC: { background: "#1e293b", borderRadius: 14, padding: "18px 20px", display: "flex", alignItems: "flex-start", gap: 14 },
-  calcC: { background: "#1e293b", borderRadius: 16, padding: 22 },
-  calcI: { background: "#0f172a", borderRadius: 12, padding: "14px 16px", display: "flex", flexDirection: "column", gap: 4 },
-  ov: { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 16, backdropFilter: "blur(6px)" },
-  mod: { background: "#1e293b", borderRadius: 22, padding: "28px 24px", maxWidth: 440, width: "100%", boxShadow: "0 24px 64px rgba(0,0,0,.5)", border: "1px solid #334155" },
-  modT: { fontFamily: "'Fraunces',serif", fontSize: 22, fontWeight: 700, color: "#f1f5f9" },
-  curTog: { display: "flex", gap: 6, marginBottom: 16 },
-  curB: { flex: 1, padding: "9px 0", border: "1px solid #334155", borderRadius: 10, background: "transparent", color: "#64748b", fontSize: 13, fontWeight: 500, cursor: "pointer" },
-  curBA: { background: "#0f5132", borderColor: "#0f5132", color: "#fff" },
-  curBU: { background: "#1d4ed8", borderColor: "#1d4ed8", color: "#fff" },
-  fLbl: { display: "block", fontSize: 12, fontWeight: 600, color: "#94a3b8", marginBottom: 5, textTransform: "uppercase", letterSpacing: .3 },
-  fIn: { width: "100%", padding: "11px 14px", border: "1px solid #334155", borderRadius: 10, fontSize: 14, background: "#0f172a", color: "#e2e8f0" },
-  canBtn: { padding: "10px 22px", border: "1px solid #334155", borderRadius: 12, background: "transparent", color: "#94a3b8", fontWeight: 500, cursor: "pointer", fontSize: 14 },
-
-  // Education
-  eduBtn: { display: "flex", alignItems: "center", gap: 12, width: "100%", padding: "16px 18px", border: "1px solid #334155", borderRadius: 14, cursor: "pointer", fontSize: 14, transition: "all .2s" },
-  eduContent: { padding: "16px 20px", background: "#0f172a", borderRadius: "0 0 14px 14px", border: "1px solid #334155", borderTop: "none", fontSize: 14, color: "#cbd5e1", marginTop: -4 },
+const inputStyle = {
+  width: "100%",
+  maxWidth: 72,
+  padding: "6px 8px",
+  background: "rgba(15,23,42,0.6)",
+  border: "1px solid #334155",
+  borderRadius: 6,
+  color: "#e2e8f0",
+  fontSize: 14,
+  fontFamily: "'Space Mono', monospace",
+  textAlign: "center",
+  outline: "none",
 };
