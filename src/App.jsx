@@ -630,40 +630,41 @@ export default function App() {
           ? (ult3.reduce((acc, m) => acc * (1 + m.valor / 100), 1) - 1) * 100
           : 0;
 
-        // Egresos ARS por mes del año (con datos)
         const hoy = new Date();
-        const START_MONTH = 4; // Mayo = índice 4 (primer mes con registros)
+        const START_MONTH = 4; // Mayo
         const START_YEAR = 2026;
+        // Un gasto es "variable" si NO está marcado como Fijo
+        const esVariable = t => t.type === "egreso" && t.currency === "ARS" && t.tipoIngreso !== "Fijo";
+        const esFijo = t => t.type === "egreso" && t.currency === "ARS" && t.tipoIngreso === "Fijo";
 
-        // Promedio diario POR CADA MES (días completos del mes)
+        // Promedio diario POR CADA MES (solo variables, días completos del mes)
         const perMonth = [];
         for (let mi = 0; mi < 12; mi++) {
           const mt = txs.filter(t => { const d = new Date(t.date + "T12:00:00"); return d.getFullYear() === selYear && d.getMonth() === mi; });
-          const egARSmes = mt.filter(t => t.type === "egreso" && t.currency === "ARS").reduce((s, t) => s + t.amount, 0);
-          if (egARSmes > 0) {
+          const varARSmes = mt.filter(esVariable).reduce((s, t) => s + t.amount, 0);
+          const fijoARSmes = mt.filter(esFijo).reduce((s, t) => s + t.amount, 0);
+          if (varARSmes > 0 || fijoARSmes > 0) {
             const diasMes = new Date(selYear, mi + 1, 0).getDate();
-            perMonth.push({ mi, mes: FULL_MONTHS[mi], egARS: egARSmes, dias: diasMes, promedio: egARSmes / diasMes });
+            perMonth.push({ mi, mes: FULL_MONTHS[mi], varARS: varARSmes, fijoARS: fijoARSmes, dias: diasMes, promedio: varARSmes / diasMes });
           }
         }
 
-        // Promedio GENERAL dinámico: total gastos ARS desde Mayo / total días transcurridos
-        // Solo cuenta meses desde START. Días: para meses pasados completos, para el mes actual hasta hoy.
-        let totalEgGeneral = 0, totalDiasGeneral = 0;
+        // Promedio GENERAL dinámico (solo variables) desde Mayo
+        let totalVarGeneral = 0, totalFijoGeneral = 0, totalDiasGeneral = 0;
         for (let mi = 0; mi < 12; mi++) {
-          if (selYear === START_YEAR && mi < START_MONTH) continue; // antes de Mayo no cuenta
-          const mt = txs.filter(t => { const d = new Date(t.date + "T12:00:00"); return d.getFullYear() === selYear && d.getMonth() === mi; });
-          const egARSmes = mt.filter(t => t.type === "egreso" && t.currency === "ARS").reduce((s, t) => s + t.amount, 0);
+          if (selYear === START_YEAR && mi < START_MONTH) continue;
           const esMesFuturo = selYear > hoy.getFullYear() || (selYear === hoy.getFullYear() && mi > hoy.getMonth());
           if (esMesFuturo) continue;
+          const mt = txs.filter(t => { const d = new Date(t.date + "T12:00:00"); return d.getFullYear() === selYear && d.getMonth() === mi; });
+          const varARSmes = mt.filter(esVariable).reduce((s, t) => s + t.amount, 0);
+          const fijoARSmes = mt.filter(esFijo).reduce((s, t) => s + t.amount, 0);
           const esMesActual = selYear === hoy.getFullYear() && mi === hoy.getMonth();
-          // Solo sumamos días de meses que ya empezaron a registrar (desde Mayo) y que tengan datos o sean <= mes actual
-          const yaArranco = !(selYear === START_YEAR && mi < START_MONTH);
-          if (!yaArranco) continue;
           const diasMes = esMesActual ? hoy.getDate() : new Date(selYear, mi + 1, 0).getDate();
-          totalEgGeneral += egARSmes;
+          totalVarGeneral += varARSmes;
+          totalFijoGeneral += fijoARSmes;
           totalDiasGeneral += diasMes;
         }
-        const promedioGeneral = totalDiasGeneral > 0 ? totalEgGeneral / totalDiasGeneral : 0;
+        const promedioGeneral = totalDiasGeneral > 0 ? totalVarGeneral / totalDiasGeneral : 0;
         const maxProm = Math.max(...perMonth.map(m => m.promedio), 1);
 
         return (
@@ -691,27 +692,32 @@ export default function App() {
               </div>
             </div>
 
-            {/* Gasto promedio GENERAL dinámico */}
+            {/* Gasto variable promedio GENERAL dinámico */}
             <div style={{ ...S.insC, borderLeft: "4px solid #3b82f6", marginBottom: 12 }}>
               <span style={{ fontSize: 22 }}>📅</span>
               <div style={{ fontSize: 14, color: "#cbd5e1", lineHeight: 1.8, width: "100%" }}>
-                <p style={{ fontWeight: 700, color: "#e2e8f0", marginBottom: 6 }}>Gasto promedio por día (general)</p>
+                <p style={{ fontWeight: 700, color: "#e2e8f0", marginBottom: 6 }}>Gasto variable por día (general)</p>
                 {totalDiasGeneral === 0 ? (
                   <p>No hay egresos cargados todavía.</p>
                 ) : (<>
                   <p style={{ fontSize: 26, fontWeight: 800, color: "#f87171", fontFamily: "'Fraunces',serif", margin: "4px 0" }}>{fmt(promedioGeneral)}</p>
                   <p style={{ color: "#94a3b8", fontSize: 13 }}>
-                    Total gastado en pesos: <strong style={{ color: "#e2e8f0" }}>{fmt(totalEgGeneral)}</strong> sobre <strong style={{ color: "#e2e8f0" }}>{totalDiasGeneral}</strong> días (desde mayo). Se actualiza solo con el paso de los días.
+                    Gasto variable total: <strong style={{ color: "#e2e8f0" }}>{fmt(totalVarGeneral)}</strong> sobre <strong style={{ color: "#e2e8f0" }}>{totalDiasGeneral}</strong> días (desde mayo). No incluye gastos fijos.
                   </p>
+                  {totalFijoGeneral > 0 && (
+                    <p style={{ color: "#64748b", fontSize: 12, marginTop: 4, borderTop: "1px solid #334155", paddingTop: 6 }}>
+                      💡 Gastos fijos acumulados aparte: <strong style={{ color: "#94a3b8" }}>{fmt(totalFijoGeneral)}</strong>
+                    </p>
+                  )}
                 </>)}
               </div>
             </div>
 
-            {/* Gasto promedio por MES */}
+            {/* Gasto variable promedio por MES */}
             <div style={{ ...S.insC, borderLeft: "4px solid #10b981", marginBottom: 12 }}>
               <span style={{ fontSize: 22 }}>📊</span>
               <div style={{ fontSize: 14, color: "#cbd5e1", lineHeight: 1.8, width: "100%" }}>
-                <p style={{ fontWeight: 700, color: "#e2e8f0", marginBottom: 10 }}>Gasto diario promedio por mes</p>
+                <p style={{ fontWeight: 700, color: "#e2e8f0", marginBottom: 10 }}>Gasto variable diario por mes</p>
                 {perMonth.length === 0 ? (
                   <p>No hay meses con egresos cargados en {selYear}.</p>
                 ) : (
@@ -722,7 +728,7 @@ export default function App() {
                         <span style={{ fontSize: 14, fontWeight: 700, color: "#f87171" }}>{fmt(m.promedio)}<span style={{ color: "#64748b", fontWeight: 400, fontSize: 12 }}> /día</span></span>
                       </div>
                       <div style={S.barBg}><div style={{ height: "100%", borderRadius: 3, width: `${(m.promedio / maxProm) * 100}%`, background: "linear-gradient(90deg,#0f5132,#34d399)", transition: "width .5s" }} /></div>
-                      <p style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>{fmt(m.egARS)} en {m.dias} días</p>
+                      <p style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>{fmt(m.varARS)} variable en {m.dias} días{m.fijoARS > 0 ? ` · ${fmt(m.fijoARS)} fijo` : ""}</p>
                     </div>
                   ))
                 )}
