@@ -191,7 +191,7 @@ export default function App() {
     const iA = sumBy(mt, "ingreso", "ARS"), eA = sumBy(mt, "egreso", "ARS"), iU = sumBy(mt, "ingreso", "USD"), eU = sumBy(mt, "egreso", "USD");
     return { month: m, ingARS: iA, egARS: eA, ingUSD: iU, egUSD: eU, balARS: iA - eA, balUSD: iU - eU };
   });
-  let cumulARS = 0, cumulUSD = 0;
+  let cumulARS = INITIAL_ARS, cumulUSD = INITIAL_USD;
   const cumulData = annualData.map(d => { cumulARS += d.balARS; cumulUSD += d.balUSD; return { ...d, cumulARS, cumulUSD }; });
 
   const catBreakdown = (type) => {
