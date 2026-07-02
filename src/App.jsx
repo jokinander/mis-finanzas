@@ -625,21 +625,46 @@ export default function App() {
       {/* === CHICHES === */}
       {view === "chiches" && (() => {
         // IPC acumulado últimos 3 meses (compuesto)
-        const ult3 = ecoData.inflacion.slice(0, 3); // ya viene ordenado más reciente primero
+        const ult3 = ecoData.inflacion.slice(0, 3);
         const ipcAcum = ult3.length > 0
           ? (ult3.reduce((acc, m) => acc * (1 + m.valor / 100), 1) - 1) * 100
           : 0;
 
-        // Gasto promedio por día del mes seleccionado (ARS)
-        const egMesARS = monthTxs.filter(t => t.type === "egreso" && t.currency === "ARS").reduce((s, t) => s + t.amount, 0);
-        const egMesUSD = monthTxs.filter(t => t.type === "egreso" && t.currency === "USD").reduce((s, t) => s + t.amount, 0);
+        // Egresos ARS por mes del año (con datos)
         const hoy = new Date();
-        const esMesActual = selYear === hoy.getFullYear() && selMonth === hoy.getMonth();
-        const diasTranscurridos = esMesActual ? hoy.getDate() : new Date(selYear, selMonth + 1, 0).getDate();
-        const gastoDiaARS = diasTranscurridos > 0 ? egMesARS / diasTranscurridos : 0;
-        const gastoDiaUSD = diasTranscurridos > 0 ? egMesUSD / diasTranscurridos : 0;
-        const diasDelMes = new Date(selYear, selMonth + 1, 0).getDate();
-        const proyeccionMes = gastoDiaARS * diasDelMes;
+        const START_MONTH = 4; // Mayo = índice 4 (primer mes con registros)
+        const START_YEAR = 2026;
+
+        // Promedio diario POR CADA MES (días completos del mes)
+        const perMonth = [];
+        for (let mi = 0; mi < 12; mi++) {
+          const mt = txs.filter(t => { const d = new Date(t.date + "T12:00:00"); return d.getFullYear() === selYear && d.getMonth() === mi; });
+          const egARSmes = mt.filter(t => t.type === "egreso" && t.currency === "ARS").reduce((s, t) => s + t.amount, 0);
+          if (egARSmes > 0) {
+            const diasMes = new Date(selYear, mi + 1, 0).getDate();
+            perMonth.push({ mi, mes: FULL_MONTHS[mi], egARS: egARSmes, dias: diasMes, promedio: egARSmes / diasMes });
+          }
+        }
+
+        // Promedio GENERAL dinámico: total gastos ARS desde Mayo / total días transcurridos
+        // Solo cuenta meses desde START. Días: para meses pasados completos, para el mes actual hasta hoy.
+        let totalEgGeneral = 0, totalDiasGeneral = 0;
+        for (let mi = 0; mi < 12; mi++) {
+          if (selYear === START_YEAR && mi < START_MONTH) continue; // antes de Mayo no cuenta
+          const mt = txs.filter(t => { const d = new Date(t.date + "T12:00:00"); return d.getFullYear() === selYear && d.getMonth() === mi; });
+          const egARSmes = mt.filter(t => t.type === "egreso" && t.currency === "ARS").reduce((s, t) => s + t.amount, 0);
+          const esMesFuturo = selYear > hoy.getFullYear() || (selYear === hoy.getFullYear() && mi > hoy.getMonth());
+          if (esMesFuturo) continue;
+          const esMesActual = selYear === hoy.getFullYear() && mi === hoy.getMonth();
+          // Solo sumamos días de meses que ya empezaron a registrar (desde Mayo) y que tengan datos o sean <= mes actual
+          const yaArranco = !(selYear === START_YEAR && mi < START_MONTH);
+          if (!yaArranco) continue;
+          const diasMes = esMesActual ? hoy.getDate() : new Date(selYear, mi + 1, 0).getDate();
+          totalEgGeneral += egARSmes;
+          totalDiasGeneral += diasMes;
+        }
+        const promedioGeneral = totalDiasGeneral > 0 ? totalEgGeneral / totalDiasGeneral : 0;
+        const maxProm = Math.max(...perMonth.map(m => m.promedio), 1);
 
         return (
           <div style={{ animation: "fadeIn .4s" }}>
@@ -666,35 +691,41 @@ export default function App() {
               </div>
             </div>
 
-            {/* Calculadora de gasto por día */}
+            {/* Gasto promedio GENERAL dinámico */}
             <div style={{ ...S.insC, borderLeft: "4px solid #3b82f6", marginBottom: 12 }}>
               <span style={{ fontSize: 22 }}>📅</span>
               <div style={{ fontSize: 14, color: "#cbd5e1", lineHeight: 1.8, width: "100%" }}>
-                <p style={{ fontWeight: 700, color: "#e2e8f0", marginBottom: 6 }}>Gasto promedio por día — {FULL_MONTHS[selMonth]}</p>
-                {egMesARS === 0 && egMesUSD === 0 ? (
-                  <p>No hay egresos cargados este mes.</p>
+                <p style={{ fontWeight: 700, color: "#e2e8f0", marginBottom: 6 }}>Gasto promedio por día (general)</p>
+                {totalDiasGeneral === 0 ? (
+                  <p>No hay egresos cargados todavía.</p>
                 ) : (<>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 6 }}>
-                    <div style={S.calcI}>
-                      <span style={{ fontSize: 11, color: "#64748b", textTransform: "uppercase", letterSpacing: .3 }}>Por día (ARS)</span>
-                      <span style={{ fontSize: 20, fontWeight: 700, color: "#f87171", fontFamily: "'Fraunces',serif" }}>{fmt(gastoDiaARS)}</span>
-                    </div>
-                    {egMesUSD > 0 && (
-                      <div style={S.calcI}>
-                        <span style={{ fontSize: 11, color: "#64748b", textTransform: "uppercase", letterSpacing: .3 }}>Por día (USD)</span>
-                        <span style={{ fontSize: 20, fontWeight: 700, color: "#60a5fa", fontFamily: "'Fraunces',serif" }}>{fmt(gastoDiaUSD, "USD")}</span>
-                      </div>
-                    )}
-                  </div>
-                  <p style={{ color: "#94a3b8", fontSize: 13, marginTop: 10 }}>
-                    Sobre {diasTranscurridos} día{diasTranscurridos !== 1 ? "s" : ""} {esMesActual ? "transcurridos" : "del mes"}. Total gastado en pesos: <strong style={{ color: "#e2e8f0" }}>{fmt(egMesARS)}</strong>.
+                  <p style={{ fontSize: 26, fontWeight: 800, color: "#f87171", fontFamily: "'Fraunces',serif", margin: "4px 0" }}>{fmt(promedioGeneral)}</p>
+                  <p style={{ color: "#94a3b8", fontSize: 13 }}>
+                    Total gastado en pesos: <strong style={{ color: "#e2e8f0" }}>{fmt(totalEgGeneral)}</strong> sobre <strong style={{ color: "#e2e8f0" }}>{totalDiasGeneral}</strong> días (desde mayo). Se actualiza solo con el paso de los días.
                   </p>
-                  {esMesActual && gastoDiaARS > 0 && (
-                    <p style={{ color: "#f59e0b", fontSize: 13, marginTop: 4 }}>
-                      📊 A este ritmo, vas a cerrar el mes gastando ~<strong>{fmt(proyeccionMes)}</strong> en pesos.
-                    </p>
-                  )}
                 </>)}
+              </div>
+            </div>
+
+            {/* Gasto promedio por MES */}
+            <div style={{ ...S.insC, borderLeft: "4px solid #10b981", marginBottom: 12 }}>
+              <span style={{ fontSize: 22 }}>📊</span>
+              <div style={{ fontSize: 14, color: "#cbd5e1", lineHeight: 1.8, width: "100%" }}>
+                <p style={{ fontWeight: 700, color: "#e2e8f0", marginBottom: 10 }}>Gasto diario promedio por mes</p>
+                {perMonth.length === 0 ? (
+                  <p>No hay meses con egresos cargados en {selYear}.</p>
+                ) : (
+                  perMonth.map(m => (
+                    <div key={m.mi} style={{ marginBottom: 12 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                        <span style={{ fontSize: 13, color: "#94a3b8" }}>{m.mes}</span>
+                        <span style={{ fontSize: 14, fontWeight: 700, color: "#f87171" }}>{fmt(m.promedio)}<span style={{ color: "#64748b", fontWeight: 400, fontSize: 12 }}> /día</span></span>
+                      </div>
+                      <div style={S.barBg}><div style={{ height: "100%", borderRadius: 3, width: `${(m.promedio / maxProm) * 100}%`, background: "linear-gradient(90deg,#0f5132,#34d399)", transition: "width .5s" }} /></div>
+                      <p style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>{fmt(m.egARS)} en {m.dias} días</p>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
           </div>
