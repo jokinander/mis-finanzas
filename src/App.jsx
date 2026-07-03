@@ -649,21 +649,11 @@ export default function App() {
           }
         }
 
-        // Promedio GENERAL dinámico (solo variables) desde Mayo
-        let totalVarGeneral = 0, totalFijoGeneral = 0, totalDiasGeneral = 0;
-        for (let mi = 0; mi < 12; mi++) {
-          if (selYear === START_YEAR && mi < START_MONTH) continue;
-          const esMesFuturo = selYear > hoy.getFullYear() || (selYear === hoy.getFullYear() && mi > hoy.getMonth());
-          if (esMesFuturo) continue;
-          const mt = txs.filter(t => { const d = new Date(t.date + "T12:00:00"); return d.getFullYear() === selYear && d.getMonth() === mi; });
-          const varARSmes = mt.filter(esVariable).reduce((s, t) => s + t.amount, 0);
-          const fijoARSmes = mt.filter(esFijo).reduce((s, t) => s + t.amount, 0);
-          const esMesActual = selYear === hoy.getFullYear() && mi === hoy.getMonth();
-          const diasMes = esMesActual ? hoy.getDate() : new Date(selYear, mi + 1, 0).getDate();
-          totalVarGeneral += varARSmes;
-          totalFijoGeneral += fijoARSmes;
-          totalDiasGeneral += diasMes;
-        }
+        // Promedio GENERAL: total variable / suma de días de los meses que TIENEN gasto variable
+        // (coincide con las barras por mes de abajo)
+        const totalVarGeneral = perMonth.reduce((s, m) => s + m.varARS, 0);
+        const totalFijoGeneral = perMonth.reduce((s, m) => s + m.fijoARS, 0);
+        const totalDiasGeneral = perMonth.filter(m => m.varARS > 0).reduce((s, m) => s + m.dias, 0);
         const promedioGeneral = totalDiasGeneral > 0 ? totalVarGeneral / totalDiasGeneral : 0;
         const maxProm = Math.max(...perMonth.map(m => m.promedio), 1);
 
