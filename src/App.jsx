@@ -7,7 +7,7 @@ const FULL_MONTHS = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","A
 const CAT_ING = ["Sueldo","Inversiones","Regalo"];
 const CAT_EG = ["Comida Agile","Comida Banda","Supermercado","Joda","Puchos","Ropa","Alquiler","Servicios/Impuestos","Combustible","Nilda","Inversiones","Compra de Dólares","Otro"];
 
-const INITIAL_ARS = 12401513.35;
+const INITIAL_ARS = 8149629.42;
 const INITIAL_USD = 5542;
 
 const fmt = (n, cur = "ARS") => {
